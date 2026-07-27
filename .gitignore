@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+.venv/
+node_modules/
+outputs/
+backups/
+data/
+uploads/
+scripts/__pycache__/
+*.log
+*.zip
+.DS_Store
+*.pem
+*.key
+*.crt
+*.p12

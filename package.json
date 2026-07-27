@@ -1,0 +1,20 @@
+{
+  "name": "hr-resume-collection-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js",
+    "test": "node --test tests/*.test.js",
+    "db:migrate": "node scripts/migrate-json-to-mysql.js"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "mysql2": "3.14.0",
+    "redis": "4.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

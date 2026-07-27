@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>候选人简历填写</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="public">
+    <section class="public-card">
+      <h1 id="title">简历填写</h1>
+      <p>请填写真实信息，手机号在同一项目内不可重复提交。</p>
+      <div class="form-grid">
+        <label>姓名<input id="name" required></label>
+        <label>性别<select id="gender" required><option>男</option><option>女</option><option>其他</option></select></label>
+        <label>出生日期（身份证自动提取）<input id="birthDate" readonly required></label>
+        <label>学历<select id="education" required><option>初中及以下</option><option>高中</option><option>中专或技校</option><option>大专</option><option>本科</option><option>研究生</option><option>博士</option></select></label>
+        <label>手机号<input id="phone" inputmode="tel" required></label>
+        <label>身份证号码<input id="idCard" maxlength="18" minlength="18" placeholder="18位身份证号" required></label>
+        <label>邮箱<input id="email" type="email" required></label>
+        <label>获知招聘信息渠道<select id="channel" required><option>BOSS直聘</option><option>58同城</option><option>本地招聘网</option><option>现场招聘会</option><option>亲友介绍</option><option>社区推荐</option><option>其他</option></select></label>
+        <label id="channelDetailWrap" style="display:none">渠道补充信息<input id="channelDetail" placeholder="如选择其他，请输入具体渠道；如选择亲友介绍，请输入介绍人"></label>
+        <label>应聘岗位<input id="position" required></label>
+        <label>可到岗时间<input id="availableDate" type="text" inputmode="numeric" maxlength="10" placeholder="yyyy-mm-dd" data-manual-date required></label>
+        <label>毕业院校<input id="school" required></label>
+        <label>所学专业<input id="major" required></label>
+        <label>普通话水平等级<select id="mandarin" required><option>未评级</option><option>一甲</option><option>一乙</option><option>二甲</option><option>二乙</option><option>三甲</option><option>三乙</option></select></label>
+        <label>毕业时间<input id="graduationTime" type="text" inputmode="numeric" maxlength="10" placeholder="yyyy-mm-dd" data-manual-date required></label>
+        <label>是否有电话客服类行业经验<select id="phoneExp" required><option value="true">是</option><option value="false">否</option></select></label>
+        <label>当前居住省份<select id="residenceProvince" required></select></label>
+        <label>当前居住地市<select id="residenceCity" required></select></label>
+        <label>婚姻状况<select id="marital" required><option>未婚</option><option>已婚</option></select></label>
+        <label>子女情况<select id="children" required><option>无</option><option>有</option></select></label>
+        <label>期望工作省份<select id="expectedProvince" required></select></label>
+        <label>期望工作地市<select id="expectedCity" required></select></label>
+      </div><br>
+      <label>上一份工作离职原因<textarea id="leave" maxlength="500" required></textarea><span class="counter" id="leave-count">0/500</span></label>
+      <h3>工作经历</h3>
+      <div id="works"></div>
+      <button id="add">增加经历</button><br><br>
+      <div class="captcha-row">
+        <label>验证码<input id="captcha" placeholder="输入计算结果" required></label>
+        <img id="captcha-img" alt="验证码">
+      </div><br>
+      <button class="primary" id="submit">提交简历</button>
+      <div id="msg"></div>
+    </section>
+  </main>
+  <script src="/locations.js"></script>
+  <script src="/validators.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const projectKey = params.get("code") || params.get("projectId");
+    let captcha;
+    const h = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
+    async function req(path, body) {
+      const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "请求失败");
+      return data;
+    }
+    function work() {
+      document.querySelector("#works").insertAdjacentHTML("beforeend", `<div class="work-item" data-work>
+        <div class="form-grid">
+          <label>公司名称<input data-w="companyName" required></label>
+          <label>职位<input data-w="position" required></label>
+          <label>开始时间<input data-w="startDate" type="text" inputmode="numeric" maxlength="10" placeholder="yyyy-mm-dd" data-manual-date required></label>
+          <label>结束时间<input data-w="endDate" type="text" inputmode="numeric" maxlength="10" placeholder="yyyy-mm-dd" data-manual-date required></label>
+        </div><br>
+        <label>工作描述<textarea data-w="description" required></textarea></label><br>
+        <button data-del type="button">删除经历</button>
+      </div>`);
+      document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => b.closest("[data-work]").remove());
+    }
+    function initLocationSelects() {
+      const options = (window.CHINA_LOCATIONS || []).map(([p]) => `<option value="${h(p)}">${h(p)}</option>`).join("");
+      document.querySelector("#residenceProvince").innerHTML = options;
+      document.querySelector("#expectedProvince").innerHTML = options;
+      document.querySelector("#residenceProvince").onchange = () => fillCities("residenceProvince", "residenceCity");
+      document.querySelector("#expectedProvince").onchange = () => fillCities("expectedProvince", "expectedCity");
+      fillCities("residenceProvince", "residenceCity");
+      fillCities("expectedProvince", "expectedCity");
+    }
+    function fillCities(provinceId, cityId) {
+      const province = document.querySelector(`#${provinceId}`).value;
+      const cities = (window.CHINA_LOCATIONS || []).find(([p]) => p === province)?.[1] || [];
+      document.querySelector(`#${cityId}`).innerHTML = cities.map(c => `<option value="${h(c)}">${h(c)}</option>`).join("");
+    }
+    function toggleChannelDetail() {
+      const channel = document.querySelector("#channel").value;
+      const needsDetail = ["亲友介绍", "其他"].includes(channel);
+      document.querySelector("#channelDetailWrap").style.display = needsDetail ? "grid" : "none";
+      document.querySelector("#channelDetail").required = needsDetail;
+      document.querySelector("#channelDetail").placeholder = channel === "亲友介绍" ? "请输入介绍人" : "请输入具体渠道";
+    }
+    async function load() {
+      if (!projectKey) {
+        document.querySelector("#msg").innerHTML = '<div class="notice">缺少项目参数</div>';
+        return;
+      }
+      const project = await fetch(`/api/public/projects/${projectKey}`).then(r => r.json());
+      document.querySelector("#title").textContent = `${project.name || ""} 简历填写`;
+      captcha = await req("/api/auth/captcha");
+      document.querySelector("#captcha-img").src = captcha.image;
+      initLocationSelects();
+      document.querySelector("#channel").onchange = toggleChannelDetail;
+      toggleChannelDetail();
+      work();
+      window.bindManualDateInputs(document);
+      bindIdentityBirthDate();
+      bindLeaveCounter();
+    }
+    function bindIdentityBirthDate() {
+      const idCard = document.querySelector("#idCard");
+      const birthDate = document.querySelector("#birthDate");
+      const sync = () => {
+        idCard.value = idCard.value.toUpperCase();
+        birthDate.value = window.validateIdCardNumber(idCard.value)
+          ? window.extractBirthDateFromIdCard(idCard.value)
+          : "";
+      };
+      idCard.addEventListener("input", sync);
+      sync();
+    }
+    function bindLeaveCounter() {
+      const leave = document.querySelector("#leave");
+      const counter = document.querySelector("#leave-count");
+      const update = () => counter.textContent = `${leave.value.length}/500`;
+      leave.oninput = update;
+      update();
+    }
+    document.querySelector("#captcha-img").onclick = async () => {
+      captcha = await req("/api/auth/captcha");
+      document.querySelector("#captcha-img").src = captcha.image;
+    };
+    document.querySelector("#add").onclick = () => { work(); window.bindManualDateInputs(document); };
+    document.querySelector("#submit").onclick = async () => {
+      try {
+        const channel = document.querySelector("#channel").value;
+        const channelDetail = document.querySelector("#channelDetail").value.trim();
+        const body = {
+          captchaId: captcha.captchaId,
+          captcha: document.querySelector("#captcha").value,
+          name: document.querySelector("#name").value,
+          gender: document.querySelector("#gender").value,
+          birthDate: window.extractBirthDateFromIdCard(document.querySelector("#idCard").value),
+          education: document.querySelector("#education").value,
+          phone: document.querySelector("#phone").value,
+          idCard: document.querySelector("#idCard").value.trim().toUpperCase(),
+          email: document.querySelector("#email").value,
+          recruitmentChannel: ["亲友介绍", "其他"].includes(channel) ? `${channel}：${channelDetail}` : channel,
+          appliedPosition: document.querySelector("#position").value,
+          availableDate: document.querySelector("#availableDate").value,
+          graduationSchool: document.querySelector("#school").value,
+          major: document.querySelector("#major").value,
+          mandarinLevel: document.querySelector("#mandarin").value,
+          graduationTime: document.querySelector("#graduationTime").value,
+          phoneCustomerServiceExperience: document.querySelector("#phoneExp").value === "true",
+          currentResidenceProvince: document.querySelector("#residenceProvince").value,
+          currentResidenceCity: document.querySelector("#residenceCity").value,
+          currentResidence: [document.querySelector("#residenceProvince").value, document.querySelector("#residenceCity").value].filter(Boolean).join(" "),
+          maritalStatus: document.querySelector("#marital").value,
+          childrenStatus: document.querySelector("#children").value,
+          expectedProvince: document.querySelector("#expectedProvince").value,
+          expectedCity: document.querySelector("#expectedCity").value,
+          expectedLocation: [document.querySelector("#expectedProvince").value, document.querySelector("#expectedCity").value].filter(Boolean).join(" "),
+          lastLeaveReason: document.querySelector("#leave").value,
+          workExperiences: [...document.querySelectorAll("[data-work]")].map(block => Object.fromEntries([...block.querySelectorAll("[data-w]")].map(input => [input.dataset.w, input.value])))
+        };
+        const required = {
+          name: "姓名",
+          gender: "性别",
+          birthDate: "出生日期",
+          education: "学历",
+          phone: "手机号",
+          idCard: "身份证号码",
+          email: "邮箱",
+          recruitmentChannel: "获知招聘信息渠道",
+          appliedPosition: "应聘岗位",
+          availableDate: "可到岗时间",
+          graduationSchool: "毕业院校",
+          major: "所学专业",
+          mandarinLevel: "普通话水平等级",
+          graduationTime: "毕业时间",
+          currentResidenceProvince: "当前居住省份",
+          currentResidenceCity: "当前居住地市",
+          maritalStatus: "婚姻状况",
+          childrenStatus: "子女情况",
+          expectedProvince: "期望工作省份",
+          expectedCity: "期望工作地市",
+          lastLeaveReason: "上一份工作离职原因"
+        };
+        for (const [key, label] of Object.entries(required)) {
+          if (!String(body[key] || "").trim()) throw new Error(`${label}为必填`);
+        }
+        if (!window.validatePhoneNumber(body.phone)) throw new Error("手机号格式不正确，请输入 11 位中国大陆手机号");
+        if (!window.validateIdCardNumber(body.idCard)) throw new Error("身份证号码格式不正确，请输入 18 位身份证号并检查出生日期和校验位");
+        if (body.recruitmentChannel === "亲友介绍：" || body.recruitmentChannel === "其他：") throw new Error("请补充获知招聘信息渠道的具体信息");
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) throw new Error("邮箱格式不正确");
+        for (const [value, label] of [[body.availableDate, "可到岗时间"], [body.graduationTime, "毕业时间"]]) {
+          if (!window.isValidDateOnly(value)) throw new Error(`${label}格式应为 yyyy-mm-dd`);
+        }
+        if (body.graduationTime < body.birthDate) throw new Error("毕业时间不能早于出生日期");
+        if (body.lastLeaveReason.length > 500) throw new Error("上一份工作离职原因最多500字");
+        if (!body.workExperiences.length) throw new Error("至少填写一段工作经历");
+        for (const work of body.workExperiences) {
+          if (!work.companyName || !work.position || !work.startDate || !work.endDate || !work.description) throw new Error("工作经历每一项均为必填");
+          if (!window.isValidDateOnly(work.startDate) || !window.isValidDateOnly(work.endDate)) throw new Error("工作经历日期格式应为 yyyy-mm-dd");
+          if (work.endDate < work.startDate) throw new Error("工作经历的结束时间不能早于开始时间");
+        }
+        await req(`/api/public/projects/${projectKey}/candidates`, body);
+        document.querySelector("#msg").innerHTML = '<div class="notice">提交成功，感谢填写。</div>';
+        document.querySelector("#submit").disabled = true;
+      } catch (err) {
+        document.querySelector("#msg").innerHTML = `<div class="notice">${h(err.message)}</div>`;
+      }
+    };
+    load();
+  </script>
+</body>
+</html>
