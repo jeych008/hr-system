@@ -129,6 +129,14 @@
 
 联合唯一索引：`uk_daily_report(project_id, date)`。生产版可加触发器禁止 `UPDATE/DELETE`。
 
+日报同时保存全项目快照（`project_id = '__all__'`）和每个项目快照。`payload` 包含当日/累计指标、入职趋势、候选人分布、按项目累计和当日项目数据。PDF 存放在 `REPORTS_DIR/YYYY-MM-DD/`，可由不可变 JSON 快照确定性重建。
+
+## system_settings
+
+保存日报生成与发送配置。当前使用固定主键 `report_delivery`，`payload` 中包含发送时间、企业微信机器人 Webhook、启停状态及最近生成/发送结果。Webhook 不通过读取接口明文返回。
+
+从 schema v1 升级到 v2 时，先备份数据库，再执行 `docs/reporting-migration.sql`，随后重新部署应用。
+
 ## audit_logs / violation_logs
 
 操作日志保留候选人创建、编辑、状态标记的前后快照；违规日志记录 18:30 后未提交或补交情况。建议按月分区或归档，保留至少 6 个月。

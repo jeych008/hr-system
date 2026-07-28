@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const SCHEMA_FILE = path.join(__dirname, "mysql-schema.sql");
+const SCHEMA_VERSION = 2;
 
 function mysqlOptions(config) {
   const url = new URL(config.mysqlUrl);
@@ -48,7 +49,7 @@ function createMysqlStore(config) {
       await pool.query(schema);
     } else {
       const [[metadata]] = await pool.query("SELECT schema_version FROM app_metadata WHERE id = 1");
-      if (Number(metadata?.schema_version) !== 1) throw new Error("Unsupported or missing MySQL schema; run the migration command first");
+      if (Number(metadata?.schema_version) !== SCHEMA_VERSION) throw new Error("Unsupported or missing MySQL schema; run the migration command first");
     }
   }
 
@@ -58,7 +59,7 @@ function createMysqlStore(config) {
   }
 
   async function read() {
-    const [[meta], users, projects, monthlyConfigs, candidates, dailyReports, auditLogs, violationLogs, systemMessages] = await Promise.all([
+    const [[meta], users, projects, monthlyConfigs, candidates, dailyReports, auditLogs, violationLogs, systemMessages, settings] = await Promise.all([
       pool.query("SELECT data_version FROM app_metadata WHERE id = 1").then(([rows]) => rows),
       tablePayloads("users", "username"),
       tablePayloads("projects", "id"),
@@ -67,9 +68,11 @@ function createMysqlStore(config) {
       tablePayloads("daily_reports", "report_date"),
       tablePayloads("audit_logs", "created_at DESC"),
       tablePayloads("violation_logs", "created_at DESC"),
-      tablePayloads("system_messages", "created_at DESC")
+      tablePayloads("system_messages", "created_at DESC"),
+      tablePayloads("system_settings", "setting_key")
     ]);
-    const db = { users, projects, monthlyConfigs, candidates, dailyReports, auditLogs, violationLogs, systemMessages, captchas: [] };
+    const systemSettings = settings.find(item => item?.id === "report_delivery") || null;
+    const db = { users, projects, monthlyConfigs, candidates, dailyReports, auditLogs, violationLogs, systemMessages, systemSettings, captchas: [] };
     Object.defineProperty(db, "__storageVersion", { value: Number(meta?.data_version || 0), writable: true, enumerable: false });
     return db;
   }
@@ -117,6 +120,8 @@ function createMysqlStore(config) {
         (db.candidates || []).map(item => [item.id, item.projectId, item.phone, item.employmentStatus || "CANDIDATE", mysqlDate(item.createdAt), mysqlDate(item.updatedAt || item.createdAt), nullableDate(item.arrivedAt), nullableDate(item.passedAt), nullableDate(item.joinedAt), nullableDate(item.leftAt), JSON.stringify(item)]), 11);
       await replace(connection, "system_messages", "INSERT INTO system_messages (id,user_id,project_id,message_type,created_at,read_at,payload)",
         (db.systemMessages || []).map(item => [item.id, item.userId || null, item.projectId || null, item.type || "SYSTEM", mysqlDate(item.createdAt), nullableDate(item.readAt), JSON.stringify(item)]), 7);
+      await replace(connection, "system_settings", "INSERT INTO system_settings (setting_key,payload)",
+        db.systemSettings ? [["report_delivery", JSON.stringify(db.systemSettings)]] : [], 2);
 
       await append(connection, "INSERT IGNORE INTO daily_reports (id,project_id,report_date,locked,generated_at,payload)",
         (db.dailyReports || []).map(item => [item.id, item.projectId, item.date, 1, mysqlDate(item.generatedAt), JSON.stringify(item)]), 6);
@@ -125,7 +130,7 @@ function createMysqlStore(config) {
       await append(connection, "INSERT IGNORE INTO violation_logs (id,project_id,created_at,payload)",
         (db.violationLogs || []).map(item => [item.id, item.projectId || null, mysqlDate(item.createdAt), JSON.stringify(item)]), 4);
 
-      await connection.query("UPDATE app_metadata SET data_version = data_version + 1, schema_version = 1 WHERE id = 1");
+      await connection.query("UPDATE app_metadata SET data_version = data_version + 1, schema_version = ? WHERE id = 1", [SCHEMA_VERSION]);
       await connection.commit();
       db.__storageVersion = currentVersion + 1;
     } catch (error) {
@@ -138,7 +143,7 @@ function createMysqlStore(config) {
   }
 
   async function counts() {
-    const names = ["users", "projects", "monthly_configs", "candidates", "daily_reports", "audit_logs", "violation_logs", "system_messages"];
+    const names = ["users", "projects", "monthly_configs", "candidates", "daily_reports", "audit_logs", "violation_logs", "system_messages", "system_settings"];
     const values = await Promise.all(names.map(async name => {
       const [[row]] = await pool.query(`SELECT COUNT(*) AS count FROM ${name}`);
       return [name, Number(row.count)];
@@ -150,7 +155,7 @@ function createMysqlStore(config) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
-      for (const table of ["system_messages", "violation_logs", "audit_logs", "daily_reports", "candidates", "monthly_configs", "projects", "users"]) {
+      for (const table of ["system_settings", "system_messages", "violation_logs", "audit_logs", "daily_reports", "candidates", "monthly_configs", "projects", "users"]) {
         await connection.query(`DELETE FROM ${table}`);
       }
       await connection.query("UPDATE app_metadata SET data_version = data_version + 1 WHERE id = 1");

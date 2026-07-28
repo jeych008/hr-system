@@ -32,12 +32,17 @@ services:
       retries: 20
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
     restart: unless-stopped
     env_file: .env
     environment:
       MYSQL_URL: mysql://hr_app:${MYSQL_PASSWORD}@mysql:3306/hr_resume
       REDIS_URL: redis://redis:6379/0
+      REPORTS_DIR: /app/data/reports
     depends_on:
       mysql:
         condition: service_healthy
@@ -45,6 +50,8 @@ services:
         condition: service_healthy
     expose:
       - "5177"
+    volumes:
+      - report-files:/app/data/reports
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5177/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 15s
@@ -65,3 +72,4 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  report-files:

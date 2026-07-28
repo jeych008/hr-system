@@ -1,6 +1,11 @@
 FROM node:22-bookworm-slim
 
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+ARG APT_MIRROR=deb.debian.org
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
+RUN if [ "$APT_MIRROR" != "deb.debian.org" ]; then \
+      sed -i "s|deb.debian.org|$APT_MIRROR|g" /etc/apt/sources.list.d/debian.sources; \
+    fi
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip fonts-noto-cjk fonts-wqy-zenhei \
@@ -13,11 +18,12 @@ RUN npm ci --omit=dev
 
 COPY requirements-pdf.txt ./
 RUN pip3 install --no-cache-dir --break-system-packages \
-  --index-url https://mirrors.aliyun.com/pypi/simple \
+  --index-url "$PIP_INDEX_URL" \
   -r requirements-pdf.txt
 
 COPY backend ./backend
 COPY frontend ./frontend
+RUN mkdir -p /app/data/reports && chown -R node:node /app/data
 
 USER node
 EXPOSE 5177

@@ -35,7 +35,13 @@ const state = {
 
 const $ = sel => document.querySelector(sel);
 const app = $("#app");
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
 
 function h(value) {
   return String(value ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[ch]));
@@ -276,7 +282,7 @@ function navItems() {
   const items = [
     ["candidates", "员工管理"],
     ["cumulative", "招聘统计"],
-    ["daily", "日报快照"]
+    ["daily", "日报管理"]
   ];
   if (["ADMIN", "HR"].includes(state.user?.role)) items.push(["projects", "项目配置"]);
   if (state.user?.role === "ADMIN") items.push(["users", "账号管理"], ["logs", "操作日志"]);
@@ -951,6 +957,22 @@ function renderTodayProjectStats(items = []) {
     </section>`;
 }
 
+function renderRecruitmentReport(report = {}) {
+  const current = report.currentDayMetrics || {};
+  const currentDayMetrics = {
+    ...current,
+    candidateCount: current.candidateCount ?? current.newCandidateCount ?? 0
+  };
+  const metrics = report.metrics || {};
+  const secondaryMetrics = ["onboardCount", "remainingGap", "passRate", "hcCompletionRate"];
+  return renderRecruitmentComparison(currentDayMetrics, metrics) +
+    "<br>" + renderMetrics(metrics, secondaryMetrics) +
+    renderJoinTrend(report.dailyJoinTrend || [], report.reportMonth || "") +
+    "<br>" + renderCharts(report.distributions || {}, { donutGroups: ["gender", "experience"] }) +
+    "<br>" + renderProjectStats(report.byProject || []) +
+    renderTodayProjectStats(report.todayByProject || []);
+}
+
 async function renderCumulative() {
   $("#view").innerHTML = `
     <section class="panel">
@@ -983,33 +1005,141 @@ async function loadCumulative() {
     api.get(`/api/reports/cumulative?${reportQuery.toString()}`),
     api.get(`/api/reports/cumulative?${todayQuery.toString()}`)
   ]);
-  const secondaryMetrics = ["onboardCount", "remainingGap", "passRate", "hcCompletionRate"];
-  $("#report-box").innerHTML = renderRecruitmentComparison(currentDay.metrics, cumulative.metrics) +
-    "<br>" + renderMetrics(cumulative.metrics, secondaryMetrics) +
-    renderJoinTrend(cumulative.dailyJoinTrend, month) +
-    "<br>" + renderCharts(cumulative.distributions, { donutGroups: ["gender", "experience"] }) +
-    "<br>" + renderProjectStats(cumulative.byProject) +
-    renderTodayProjectStats(cumulative.todayByProject);
+  $("#report-box").innerHTML = renderRecruitmentReport({
+    ...cumulative,
+    currentDayMetrics: currentDay.metrics,
+    reportMonth: month
+  });
+}
+
+function reportCalendarHtml(month, dates, selectedDate) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const firstWeekday = new Date(year, monthNumber - 1, 1).getDay();
+  const dayCount = new Date(year, monthNumber, 0).getDate();
+  const existing = new Set(dates);
+  const cells = Array.from({ length: firstWeekday }, () => '<span class="calendar-day calendar-empty"></span>');
+  for (let day = 1; day <= dayCount; day += 1) {
+    const date = `${month}-${String(day).padStart(2, "0")}`;
+    cells.push(`<button class="calendar-day ${existing.has(date) ? "has-report" : ""} ${selectedDate === date ? "selected" : ""}" data-report-date="${date}" aria-label="${date}${existing.has(date) ? "，已有日报" : "，暂无日报"}">${day}</button>`);
+  }
+  return `<div class="report-calendar">
+    <div class="calendar-weekdays">${["日", "一", "二", "三", "四", "五", "六"].map(day => `<span>${day}</span>`).join("")}</div>
+    <div class="calendar-days">${cells.join("")}</div>
+  </div>`;
 }
 
 async function renderDaily() {
+  const canViewAll = ["ADMIN", "OPS"].includes(state.user?.role);
+  const projectOptions = `${canViewAll ? '<option value="">全部项目</option>' : ""}${state.projects.map(project => `<option value="${h(project.id)}">${h(project.name)}</option>`).join("")}`;
+  const settings = state.user?.role === "ADMIN" ? await api.get("/api/settings/report-delivery") : null;
   $("#view").innerHTML = `
     <section class="panel">
-      <div class="toolbar">
-        <label>项目${projectSelect("daily-project")}</label>
-        <label>日期<input id="daily-date" type="date" value="${today()}"></label>
-        <button id="load-daily">查看快照</button>
-        <button id="export-daily">Excel</button>
+      <div class="section-heading">
+        <div><h3>日报历史</h3><p>红色圆圈表示该日已有锁定快照，点击日期查看完整日报。</p></div>
       </div>
-      <div id="daily-box" class="empty">日报由 19:00 定时任务固化生成，不支持手动重新生成。</div>
-    </section>`;
-  $("#load-daily").onclick = async () => {
+      <div class="toolbar">
+        <label>项目<select id="daily-project">${projectOptions}</select></label>
+        <label>月份<input id="daily-month" type="month" data-month-only value="${today().slice(0, 7)}"></label>
+        <button id="export-daily-pdf" disabled>下载 PDF</button>
+        <button id="export-daily" disabled>导出 Excel</button>
+      </div>
+      <div id="daily-calendar"></div>
+      <div id="daily-box" class="empty">请选择日期查看日报。</div>
+    </section>
+    ${settings ? `<section class="panel">
+      <div class="section-heading">
+        <div><h3>日报生成与发送</h3><p>保存后定时任务将在下一分钟读取新配置；仅支持企业微信群机器人 Webhook。</p></div>
+      </div>
+      <div class="form-grid">
+        <label>每日生成并发送时间<input id="report-send-time" type="time" value="${h(settings.sendTime)}"></label>
+        <label>企业微信机器人 Webhook<input id="report-webhook" type="password" autocomplete="off" placeholder="${h(settings.webhookHint)}"></label>
+        <label class="check-option"><input id="report-delivery-enabled" type="checkbox" ${settings.deliveryEnabled ? "checked" : ""}><span>启用自动发送</span></label>
+        <label class="check-option"><input id="report-clear-webhook" type="checkbox"><span>清除已保存的 Webhook</span></label>
+      </div>
+      <div class="report-setting-status">最近生成：${h(settings.lastGeneratedDate || "-")}　最近发送：${h(settings.lastSentDate || "-")}　${settings.lastSendError ? `<span class="danger-text">发送错误：${h(settings.lastSendError)}</span>` : ""}</div>
+      <div class="section-actions"><button class="primary" id="save-report-settings">保存设置</button></div>
+      <div class="manual-report-row">
+        <label>补生成日期<input id="manual-report-date" type="date" data-date-only value="${today()}"></label>
+        <button id="manual-generate-report">手动生成当前项目日报</button>
+      </div>
+      <div class="readonly-note">已存在的日报不会被覆盖；选择“全部项目”时会补齐全项目和各项目快照。</div>
+    </section>` : ""}`;
+  bindDateOnlyInputs($("#view"));
+
+  let reportDates = [];
+  let selectedDate = "";
+
+  const paintCalendar = () => {
+    $("#daily-calendar").innerHTML = reportCalendarHtml($("#daily-month").value, reportDates, selectedDate);
+    document.querySelectorAll("[data-report-date]").forEach(button => {
+      button.onclick = () => loadDailyDate(button.dataset.reportDate);
+    });
+  };
+
+  const loadDailyDate = async date => {
+    selectedDate = date;
+    paintCalendar();
+    const hasReport = reportDates.includes(date);
+    $("#export-daily-pdf").disabled = !hasReport;
+    $("#export-daily").disabled = !hasReport;
+    if (!hasReport) {
+      $("#daily-box").innerHTML = '<div class="empty">暂无日报</div>';
+      return;
+    }
     try {
-      const r = await api.get(`/api/reports/daily?projectId=${$("#daily-project").value}&date=${$("#daily-date").value}`);
-      $("#daily-box").innerHTML = renderMetrics(r.metrics) + "<br>" + renderCharts(r.distributions);
+      const query = new URLSearchParams({ projectId: $("#daily-project").value, date });
+      const report = await api.get(`/api/reports/daily?${query.toString()}`);
+      $("#daily-box").innerHTML = `<div class="snapshot-heading"><h3>${h(report.projectName || "招聘")}招聘日报</h3><span>${h(report.date)} 固化快照 · ${h(String(report.generatedAt || "").replace("T", " ").slice(0, 19))}</span></div>${renderRecruitmentReport(report)}`;
     } catch (err) { $("#daily-box").innerHTML = `<div class="notice">${h(err.message)}</div>`; }
   };
-  $("#export-daily").onclick = () => download(`/api/export/report.xlsx?kind=daily&projectId=${$("#daily-project").value}&date=${$("#daily-date").value}`);
+
+  const loadDailyMonth = async () => {
+    selectedDate = "";
+    const query = new URLSearchParams({ projectId: $("#daily-project").value, month: $("#daily-month").value });
+    const result = await api.get(`/api/reports/daily/dates?${query.toString()}`);
+    reportDates = result.dates || [];
+    paintCalendar();
+    const preferred = reportDates.includes(today()) ? today() : reportDates[reportDates.length - 1];
+    if (preferred) await loadDailyDate(preferred);
+    else {
+      $("#daily-box").innerHTML = '<div class="empty">本月暂无日报</div>';
+      $("#export-daily-pdf").disabled = true;
+      $("#export-daily").disabled = true;
+    }
+  };
+
+  $("#daily-project").onchange = loadDailyMonth;
+  $("#daily-month").onchange = loadDailyMonth;
+  $("#export-daily-pdf").onclick = () => download(`/api/reports/daily.pdf?${new URLSearchParams({ projectId: $("#daily-project").value, date: selectedDate }).toString()}`);
+  $("#export-daily").onclick = () => download(`/api/export/report.xlsx?${new URLSearchParams({ kind: "daily", projectId: $("#daily-project").value, date: selectedDate }).toString()}`);
+
+  if (settings) {
+    $("#save-report-settings").onclick = async () => {
+      try {
+        const webhookUrl = $("#report-webhook").value.trim();
+        const body = {
+          sendTime: $("#report-send-time").value,
+          deliveryEnabled: $("#report-delivery-enabled").checked,
+          clearWebhook: $("#report-clear-webhook").checked
+        };
+        if (webhookUrl) body.webhookUrl = webhookUrl;
+        await api.put("/api/settings/report-delivery", body);
+        alert("日报设置已保存并即时生效");
+        await renderDaily();
+      } catch (error) { alert(error.message); }
+    };
+    $("#manual-generate-report").onclick = async () => {
+      try {
+        const date = $("#manual-report-date").value;
+        await api.post("/api/reports/daily/generate", { date, projectId: $("#daily-project").value });
+        $("#daily-month").value = date.slice(0, 7);
+        await loadDailyMonth();
+        alert("日报快照和 PDF 已生成");
+      } catch (error) { alert(error.message); }
+    };
+  }
+
+  await loadDailyMonth();
 }
 
 async function renderProjects() {

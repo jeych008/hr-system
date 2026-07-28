@@ -9,12 +9,24 @@ const { loadConfig } = require("./runtime-config");
 const { createPasswordService } = require("./passwords");
 const { createSecurityState } = require("./security-state");
 const { createStorage } = require("./storage");
+const {
+  localClockParts,
+  publicReportSettings,
+  reportIsDue,
+  reportSettings,
+  sendIsDue,
+  sendWechatFile,
+  updateReportSettings
+} = require("./report-delivery");
 
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
 const DB_FILE = path.resolve(process.env.DATA_FILE || path.join(DATA_DIR, "db.json"));
 const FRONTEND_DIR = path.join(ROOT, "frontend");
 const PDF_GENERATOR = path.join(__dirname, "pdf_generator.py");
+const REPORT_PDF_GENERATOR = path.join(__dirname, "report_pdf_generator.py");
+const REPORTS_DIR = path.resolve(process.env.REPORTS_DIR || path.join(DATA_DIR, "reports"));
+const ALL_PROJECTS_REPORT_ID = "__all__";
 const config = loadConfig();
 const PORT = config.port;
 const passwordService = createPasswordService(config.bcryptRounds, { requireBcrypt: config.production });
@@ -130,6 +142,17 @@ function ensureDb() {
     auditLogs: [],
     violationLogs: [],
     systemMessages: [],
+    systemSettings: {
+      id: "report_delivery",
+      sendTime: "19:00",
+      deliveryEnabled: false,
+      webhookUrl: "",
+      lastGeneratedDate: "",
+      lastSentDate: "",
+      lastSendAttemptAt: "",
+      lastSendError: "",
+      updatedAt: ""
+    },
     captchas: []
   };
   fs.writeFileSync(DB_FILE, JSON.stringify(seed, null, 2));
@@ -141,6 +164,10 @@ function readJsonDb() {
   let changed = false;
   if (!Array.isArray(db.systemMessages)) {
     db.systemMessages = [];
+    changed = true;
+  }
+  if (!db.systemSettings || typeof db.systemSettings !== "object") {
+    reportSettings(db);
     changed = true;
   }
   for (const user of db.users || []) {
@@ -226,10 +253,11 @@ function send(res, status, body, headers = {}) {
 }
 
 function text(res, status, body, contentType) {
+  const isFrontendCode = contentType.startsWith("text/html") || contentType.startsWith("text/javascript") || contentType.startsWith("text/css");
   res.writeHead(status, {
     ...jsonHeaders,
     "content-type": contentType,
-    "cache-control": contentType.startsWith("text/html") ? "no-store" : "public, max-age=300"
+    "cache-control": isFrontendCode ? "no-cache" : "public, max-age=300"
   });
   res.end(body);
 }
@@ -542,8 +570,7 @@ function autoCounts(db, projectId, date) {
   return { newCandidateCount: created.length, arrivedCount: arrived.length, passedCount: passed.length, joinedCount: joined.length, leftCount: left.length };
 }
 
-function todayProjectStats(db, projectIds) {
-  const date = localDate();
+function todayProjectStats(db, projectIds, date = localDate()) {
   return projectIds.map(projectId => {
     const project = db.projects.find(p => p.id === projectId);
     const counts = autoCounts(db, projectId, date);
@@ -734,41 +761,43 @@ function normalizeCandidate(data) {
 }
 
 function buildDailySnapshot(db, projectId, date) {
-  const auto = autoCounts(db, projectId, date);
-  const todayCandidates = db.candidates.filter(c => c.projectId === projectId && sameDay(c.createdAt, date));
-  const hc = headcount(db, projectId, date);
+  const projectIds = projectId === ALL_PROJECTS_REPORT_ID ? db.projects.map(project => project.id) : [projectId];
+  const selectedProjectId = projectId === ALL_PROJECTS_REPORT_ID ? "" : projectId;
+  const reportMonth = localMonth(date);
+  const cumulative = cumulativeReport(db, selectedProjectId, "", date, projectIds, true, reportMonth);
+  const currentDay = cumulativeReport(db, selectedProjectId, date, date, projectIds, false, reportMonth);
+  cumulative.todayByProject = todayProjectStats(db, projectIds, date);
   return {
     id: id("daily"),
     projectId,
+    projectName: projectId === ALL_PROJECTS_REPORT_ID
+      ? "全部项目"
+      : db.projects.find(project => project.id === projectId)?.name || projectId,
     date,
     locked: true,
     generatedAt: nowIso(),
-    metrics: {
-      newCandidateCount: auto.newCandidateCount,
-      arrivedCount: auto.arrivedCount,
-      passedCount: auto.passedCount,
-      joinedCount: auto.joinedCount,
-      leftCount: auto.leftCount,
-      onboardCount: hc.onboard,
-      remainingGap: hc.gap
-    },
-    distributions: candidateStats(todayCandidates)
+    reportMonth,
+    currentDayMetrics: currentDay.metrics,
+    metrics: cumulative.metrics,
+    distributions: cumulative.distributions,
+    dailyJoinTrend: cumulative.dailyJoinTrend,
+    byProject: cumulative.byProject,
+    todayByProject: cumulative.todayByProject
   };
 }
 
-function generateDueReports(db) {
-  const now = new Date();
-  const cn = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-  if (cn.getHours() !== 19 || cn.getMinutes() > 5) return false;
-  const y = new Date(cn.getTime() - 24 * 60 * 60 * 1000);
-  const date = localDate(y);
-  let changed = false;
-  for (const project of db.projects) {
-    if (db.dailyReports.some(r => r.projectId === project.id && r.date === date)) continue;
-    db.dailyReports.push(buildDailySnapshot(db, project.id, date));
-    changed = true;
+function ensureDailyReports(db, date, onlyProjectId = null) {
+  const projectIds = onlyProjectId
+    ? [onlyProjectId]
+    : [ALL_PROJECTS_REPORT_ID, ...db.projects.map(project => project.id)];
+  const created = [];
+  for (const projectId of projectIds) {
+    if (db.dailyReports.some(report => report.projectId === projectId && report.date === date)) continue;
+    const report = buildDailySnapshot(db, projectId, date);
+    db.dailyReports.push(report);
+    created.push(report);
   }
-  return changed;
+  return created;
 }
 
 function routeParams(pathname, pattern) {
@@ -1098,6 +1127,40 @@ function candidatePdf(candidates) {
   return generated.stdout;
 }
 
+function reportPdf(report) {
+  const python = resolvePdfPython();
+  if (!python) throw new Error("日报 PDF 组件未安装，请安装 requirements-pdf.txt 中的依赖");
+  const generated = spawnSync(python, [REPORT_PDF_GENERATOR], {
+    input: JSON.stringify({ report }),
+    maxBuffer: 32 * 1024 * 1024,
+    timeout: 30000
+  });
+  if (generated.error || generated.status !== 0 || generated.stdout?.subarray(0, 5).toString() !== "%PDF-") {
+    throw new Error(`日报 PDF 生成失败：${generated.error?.message || generated.stderr?.toString().trim() || `exit ${generated.status}`}`);
+  }
+  return generated.stdout;
+}
+
+function reportPdfPath(projectId, date) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(projectId || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) {
+    throw new Error("日报文件参数不正确");
+  }
+  const directory = path.resolve(REPORTS_DIR, date);
+  const file = path.resolve(directory, `${projectId}.pdf`);
+  if (!file.startsWith(`${directory}${path.sep}`)) throw new Error("日报文件路径不正确");
+  return file;
+}
+
+function ensureReportPdf(report) {
+  const file = reportPdfPath(report.projectId, report.date);
+  if (fs.existsSync(file)) return file;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  fs.writeFileSync(temporary, reportPdf(report), { mode: 0o600 });
+  fs.renameSync(temporary, file);
+  return file;
+}
+
 function cumulativeReport(db, projectId, from, to, allowedProjectIds = null, includeByProject = true, trendMonth = localMonth()) {
   const projectIds = projectId ? [projectId] : (allowedProjectIds || db.projects.map(p => p.id));
   const allowed = new Set(projectIds);
@@ -1159,7 +1222,23 @@ const distributionLabels = {
 };
 
 function reportRows(report) {
-  const rows = [["指标", "数值"]];
+  const rows = [];
+  if (report.date) rows.push(["日报日期", report.date], ["生成时间", report.generatedAt || ""], []);
+  if (report.currentDayMetrics) {
+    const todayLabels = {
+      candidateCount: "今日新增候选人",
+      arrivedCount: "今日到面人数",
+      passedCount: "今日通过人数",
+      joinedCount: "今日入职人数",
+      leftCount: "今日离职人数"
+    };
+    rows.push(["当日指标", "数值"]);
+    for (const key of ["candidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount"]) {
+      rows.push([todayLabels[key], report.currentDayMetrics[key] || 0]);
+    }
+    rows.push([]);
+  }
+  rows.push(["累计指标", "数值"]);
   for (const [key, value] of Object.entries(report.metrics || {})) {
     const formatted = ["passRate", "hcCompletionRate"].includes(key) ? `${value}%` : value;
     rows.push([metricLabels[key] || key, formatted]);
@@ -1171,6 +1250,10 @@ function reportRows(report) {
       const percent = total ? `${(Number(value || 0) / total * 100).toFixed(1)}%` : "0.0%";
       rows.push([distributionLabels[group] || group, key, value, percent]);
     }
+  }
+  if (report.dailyJoinTrend?.length) {
+    rows.push([], ["当月每日入职人数"], ["日期", "入职人数"]);
+    for (const item of report.dailyJoinTrend) rows.push([item.date, item.count]);
   }
   if (report.byProject?.length) {
     rows.push([], ["按项目统计"], ["项目", "累计候选人", "到面人数", "通过人数", "入职人数", "离职人数", "当前在岗人数", "当前剩余缺口", "总通过率", "目标完成率"]);
@@ -1594,13 +1677,79 @@ async function api(req, res, pathname, searchParams) {
     return send(res, 200, c);
   }
 
+  if (method === "GET" && pathname === "/api/settings/report-delivery") {
+    if (user.role !== "ADMIN") return bad(res, "无权限", 403);
+    return send(res, 200, publicReportSettings(reportSettings(db)));
+  }
+
+  if (method === "PUT" && pathname === "/api/settings/report-delivery") {
+    if (user.role !== "ADMIN") return bad(res, "无权限", 403);
+    const body = await parseBody(req);
+    try {
+      updateReportSettings(reportSettings(db), body, nowIso());
+    } catch (error) {
+      return bad(res, error.message);
+    }
+    await writeDb(db);
+    return send(res, 200, publicReportSettings(db.systemSettings));
+  }
+
+  if (method === "POST" && pathname === "/api/reports/daily/generate") {
+    if (user.role !== "ADMIN") return bad(res, "无权限", 403);
+    const body = await parseBody(req);
+    const date = String(body.date || localDate());
+    if (!isDateOnly(date) || date > localDate()) return bad(res, "日报日期必须是今天或过去的有效日期");
+    const requestedProjectId = String(body.projectId || "");
+    if (requestedProjectId && !db.projects.some(project => project.id === requestedProjectId)) return bad(res, "项目不存在", 404);
+    const created = ensureDailyReports(db, date, requestedProjectId || null);
+    if (!created.length) return bad(res, "该日期的日报已存在，历史快照不可覆盖", 409);
+    for (const report of created) ensureReportPdf(report);
+    if (!requestedProjectId && date === localDate()) reportSettings(db).lastGeneratedDate = date;
+    db.auditLogs.unshift({
+      id: id("log"), actorId: user.id, action: "GENERATE_DAILY_REPORT", entityType: "DAILY_REPORT",
+      entityId: date, before: null, after: { date, projectId: requestedProjectId || ALL_PROJECTS_REPORT_ID, createdCount: created.length }, createdAt: nowIso()
+    });
+    await writeDb(db);
+    return send(res, 201, { message: `已生成 ${created.length} 份日报快照`, date, createdCount: created.length });
+  }
+
+  if (method === "GET" && pathname === "/api/reports/daily/dates") {
+    const requestedProjectId = searchParams.get("projectId") || "";
+    const projectId = requestedProjectId || ALL_PROJECTS_REPORT_ID;
+    const month = searchParams.get("month") || localMonth();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return bad(res, "月份格式应为 yyyy-MM");
+    if (projectId === ALL_PROJECTS_REPORT_ID && !canAccessAllRecruitmentData(user)) return bad(res, "无权限", 403);
+    if (projectId !== ALL_PROJECTS_REPORT_ID && !projectAllowed(user, projectId)) return bad(res, "无权限", 403);
+    const dates = db.dailyReports
+      .filter(report => report.projectId === projectId && report.date.startsWith(`${month}-`))
+      .map(report => report.date)
+      .sort();
+    return send(res, 200, { projectId: requestedProjectId, month, dates });
+  }
+
   if (method === "GET" && pathname === "/api/reports/daily") {
-    const projectId = searchParams.get("projectId");
+    const requestedProjectId = searchParams.get("projectId") || "";
+    const projectId = requestedProjectId || ALL_PROJECTS_REPORT_ID;
     const date = searchParams.get("date");
-    if (!projectAllowed(user, projectId)) return bad(res, "无权限", 403);
+    if (projectId === ALL_PROJECTS_REPORT_ID && !canAccessAllRecruitmentData(user)) return bad(res, "无权限", 403);
+    if (projectId !== ALL_PROJECTS_REPORT_ID && !projectAllowed(user, projectId)) return bad(res, "无权限", 403);
     const report = db.dailyReports.find(r => r.projectId === projectId && r.date === date);
-    if (!report) return bad(res, "日报快照不存在，19:00 定时任务生成后可查看", 404);
+    if (!report) return bad(res, "暂无日报", 404);
     return send(res, 200, report);
+  }
+
+  if (method === "GET" && pathname === "/api/reports/daily.pdf") {
+    const requestedProjectId = searchParams.get("projectId") || "";
+    const projectId = requestedProjectId || ALL_PROJECTS_REPORT_ID;
+    const date = searchParams.get("date");
+    if (projectId === ALL_PROJECTS_REPORT_ID && !canAccessAllRecruitmentData(user)) return bad(res, "无权限", 403);
+    if (projectId !== ALL_PROJECTS_REPORT_ID && !projectAllowed(user, projectId)) return bad(res, "无权限", 403);
+    const report = db.dailyReports.find(item => item.projectId === projectId && item.date === date);
+    if (!report) return bad(res, "暂无日报", 404);
+    const file = ensureReportPdf(report);
+    const baseName = `${report.projectName || "招聘"}-${date}-日报`;
+    res.writeHead(200, { ...jsonHeaders, "content-type": "application/pdf", "content-disposition": `attachment; ${downloadFileName(baseName)}` });
+    return fs.createReadStream(file).pipe(res);
   }
 
   if (method === "GET" && pathname === "/api/reports/cumulative") {
@@ -1636,7 +1785,9 @@ async function api(req, res, pathname, searchParams) {
     if (projectId && !projectAllowed(user, projectId)) return bad(res, "无权限", 403);
     let rows = [];
     if (kind === "daily") {
-      const report = db.dailyReports.find(r => r.projectId === projectId && r.date === searchParams.get("date"));
+      const dailyProjectId = projectId || ALL_PROJECTS_REPORT_ID;
+      if (dailyProjectId === ALL_PROJECTS_REPORT_ID && !canAccessAllRecruitmentData(user)) return bad(res, "无权限", 403);
+      const report = db.dailyReports.find(r => r.projectId === dailyProjectId && r.date === searchParams.get("date"));
       if (!report) return bad(res, "日报快照不存在", 404);
       rows = reportRows(report);
     } else {
@@ -1662,12 +1813,69 @@ function serveStatic(req, res, pathname) {
   text(res, 200, fs.readFileSync(file), types[ext] || "application/octet-stream");
 }
 
+let backgroundJobRunning = false;
+
+async function persistReportDeliveryState(update) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const latest = await readDb();
+    update(reportSettings(latest));
+    try {
+      await writeDb(latest);
+      return;
+    } catch (error) {
+      if (error.code !== "STORE_CONFLICT" || attempt === 2) throw error;
+    }
+  }
+}
+
 async function runBackgroundJobs() {
-  const db = await readDb();
-  let changed = false;
-  if (generateDueReports(db)) changed = true;
-  if (generateEntryReminders(db)) changed = true;
-  if (changed) await writeDb(db);
+  if (backgroundJobRunning) return;
+  backgroundJobRunning = true;
+  try {
+    const db = await readDb();
+    const hadSettings = Boolean(db.systemSettings);
+    const settings = reportSettings(db);
+    let changed = !hadSettings;
+    const now = new Date();
+
+    if (reportIsDue(settings, now)) {
+      const date = localClockParts(now).date;
+      ensureDailyReports(db, date);
+      const reports = db.dailyReports.filter(report => report.date === date);
+      for (const report of reports) ensureReportPdf(report);
+      settings.lastGeneratedDate = date;
+      settings.lastSendError = "";
+      changed = true;
+    }
+    if (generateEntryReminders(db)) changed = true;
+    if (changed) await writeDb(db);
+
+    if (sendIsDue(settings, now)) {
+      const date = localClockParts(now).date;
+      const report = db.dailyReports.find(item => item.projectId === ALL_PROJECTS_REPORT_ID && item.date === date);
+      if (!report) return;
+      const attemptAt = nowIso();
+      await persistReportDeliveryState(current => {
+        current.lastSendAttemptAt = attemptAt;
+        current.lastSendError = "";
+      });
+      let sendError = "";
+      try {
+        const file = ensureReportPdf(report);
+        await sendWechatFile(settings.webhookUrl, file, `招聘日报-${date}.pdf`);
+      } catch (error) {
+        sendError = String(error.message || error).slice(0, 500);
+        console.error("Daily report delivery failed:", sendError);
+      }
+      await persistReportDeliveryState(current => {
+        current.lastSendAttemptAt = attemptAt;
+        current.lastSendError = sendError;
+        if (!sendError) current.lastSentDate = date;
+      });
+    }
+  } finally {
+    backgroundJobRunning = false;
+  }
 }
 
 let ready = false;

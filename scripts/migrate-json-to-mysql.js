@@ -13,7 +13,8 @@ function sourceCounts(db) {
     daily_reports: (db.dailyReports || []).length,
     audit_logs: (db.auditLogs || []).length,
     violation_logs: (db.violationLogs || []).length,
-    system_messages: (db.systemMessages || []).length
+    system_messages: (db.systemMessages || []).length,
+    system_settings: db.systemSettings ? 1 : 0
   };
 }
 
@@ -31,6 +32,19 @@ async function main() {
     if (!Array.isArray(db[key])) db[key] = [];
   }
   for (const user of db.users) if (!Number.isInteger(user.authVersion)) user.authVersion = 0;
+  if (!db.systemSettings) {
+    db.systemSettings = {
+      id: "report_delivery",
+      sendTime: "19:00",
+      deliveryEnabled: false,
+      webhookUrl: "",
+      lastGeneratedDate: "",
+      lastSentDate: "",
+      lastSendAttemptAt: "",
+      lastSendError: "",
+      updatedAt: ""
+    };
+  }
   const expected = sourceCounts(db);
   console.log("Source validated:", expected);
   if (dryRun) return;

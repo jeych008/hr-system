@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS app_metadata (
   updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
 ) ENGINE=InnoDB;
 
-INSERT IGNORE INTO app_metadata (id, schema_version, data_version) VALUES (1, 1, 0);
+INSERT IGNORE INTO app_metadata (id, schema_version, data_version) VALUES (1, 2, 0);
 
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(64) NOT NULL PRIMARY KEY,
@@ -99,3 +99,10 @@ CREATE TABLE IF NOT EXISTS system_messages (
   KEY idx_messages_user_read (user_id, read_at, created_at),
   KEY idx_messages_project_created (project_id, created_at)
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS system_settings (
+  setting_key VARCHAR(64) NOT NULL PRIMARY KEY,
+  payload JSON NOT NULL
+) ENGINE=InnoDB;
+
+UPDATE app_metadata SET schema_version = 2 WHERE id = 1;

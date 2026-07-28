@@ -126,6 +126,80 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
 .section-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
 .readonly-note { margin-top: 12px; color: var(--muted); font-size: 13px; }
+.report-calendar {
+  width: min(760px, 100%);
+  border: 1px solid var(--line);
+  background: #fff;
+  margin: 14px 0 18px;
+}
+.calendar-weekdays,
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(42px, 1fr));
+}
+.calendar-weekdays {
+  border-bottom: 1px solid var(--line);
+  background: #fafbfc;
+}
+.calendar-weekdays span {
+  padding: 9px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.calendar-day {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1.35;
+  border: 0;
+  border-right: 1px solid #eef0f3;
+  border-bottom: 1px solid #eef0f3;
+  border-radius: 0;
+  background: #fff;
+  color: var(--text);
+}
+.calendar-day:hover { background: #f7f9fc; }
+.calendar-day.has-report::after {
+  content: "";
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #d92d20;
+  border-radius: 50%;
+}
+.calendar-day.selected { background: var(--primary-weak); color: var(--primary); font-weight: 700; }
+.calendar-day.selected::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 1px solid var(--primary);
+}
+.calendar-empty { min-height: 48px; background: #fafbfc; }
+.snapshot-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.snapshot-heading h3 { margin: 0; }
+.snapshot-heading span, .report-setting-status { color: var(--muted); font-size: 13px; }
+.report-setting-status { margin-top: 14px; }
+.danger-text { color: var(--danger); }
+.manual-report-row {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.manual-report-row label { width: min(220px, 100%); }
 .comparison-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(130px, 1fr));
@@ -457,4 +531,6 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
   .resume-grid, .resume-work > div:first-child { grid-template-columns: 1fr; }
   .donut-wrap { grid-template-columns: 1fr; justify-items: center; }
   .legend { width: 100%; }
+  .snapshot-heading, .manual-report-row { align-items: stretch; flex-direction: column; }
+  .calendar-day { aspect-ratio: 1; padding: 4px; }
 }

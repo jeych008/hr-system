@@ -107,7 +107,12 @@
 
 ## 报表
 
-- `GET /reports/daily?projectId=&date=`：读取 19:00 固化日报快照，不存在则返回 404。
+- `GET /reports/daily/dates?projectId=&month=yyyy-MM`：查询某月已有日报日期；管理员和运营账号可用空项目表示全部项目。
+- `GET /reports/daily?projectId=&date=`：读取固化日报快照，不存在则返回 404。快照结构与招聘统计页面一致。
+- `GET /reports/daily.pdf?projectId=&date=`：下载由同一快照生成的日报 PDF。
+- `POST /reports/daily/generate`：管理员手动补生成日报，参数为 `date` 和可选 `projectId`，已存在快照返回 409 且不会覆盖。
+- `GET /settings/report-delivery`：管理员读取日报时间、发送状态和脱敏后的 Webhook 配置状态。
+- `PUT /settings/report-delivery`：管理员修改 `sendTime`、`deliveryEnabled`、`webhookUrl` 或 `clearWebhook`。
 - `GET /reports/cumulative?projectId=&from=&to=&month=2026-07`：实时招聘统计。所有指标根据候选人的创建、到面、通过、入职和离职时间自动计算；返回 `dailyJoinTrend` 作为指定月份每日入职人数曲线数据，并返回 `byProject` 按项目统计。
 - `GET /export/report.xlsx?kind=cumulative&projectId=&from=&to=`：导出累计报表。
 - `GET /export/report.xlsx?kind=daily&projectId=&date=`：导出日报。
