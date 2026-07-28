@@ -67,12 +67,12 @@ docs/api.md             接口定义
 
 第一阶段生产化配置、MySQL导入和Docker预发布步骤见 `docs/production-phase-1.md`。生产环境会拒绝使用 JSON 数据库、缺少 Redis、弱 JWT 密钥或非 HTTPS 的公开地址。
 
-## CircleCI 自动化测试
+## GitHub Actions 自动化测试
 
-仓库使用 `.circleci/config.yml` 和 CircleCI 官方 `circleci/node` Orb。每次推送和 Pull Request 会执行：
+仓库使用 `.github/workflows/ci.yml`。每次向 `main` 推送代码、创建 Pull Request 或手动触发时会执行：
 
 - JavaScript 语法检查及 Node 单元/安全测试。
 - MySQL 8 + Redis 集成测试，覆盖登录、项目配置、候选人状态、招聘统计、日报快照、PDF 和 Excel。
 - 生产 Docker 镜像构建、ReportLab 运行时和日报 PDF 烟雾测试。
 
-在 CircleCI 中使用 GitHub App 连接 `jeych008/hr-system` 后即可运行，不需要配置生产数据库或 Webhook 密钥。CI 使用隔离的临时账号和数据库，不会访问生产数据。首次连接后，在 CircleCI 项目页面确认默认分支为 `main`，随后推送 `.circleci/config.yml` 即会触发流水线。
+GitHub Actions 不需要配置生产数据库或 Webhook 密钥。工作流使用隔离的临时账号和数据库，不会访问生产数据。可在仓库的 Actions 页面查看日志和下载日报 PDF 测试产物；建议为 `main` 启用分支保护，并要求三个 CI 任务通过后才能合并。

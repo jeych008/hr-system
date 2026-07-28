@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-test:
+    name: Unit and security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: JavaScript syntax check
+        run: npm run check
+      - name: Run unit and security tests
+        run: npm test
+
+  mysql-integration:
+    name: MySQL and Redis integration
+    needs: unit-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: hr_resume_ci
+          MYSQL_USER: hr_app
+          MYSQL_PASSWORD: ci_database_password_123
+          MYSQL_ROOT_PASSWORD: root_ci_password_123
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot_ci_password_123"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    env:
+      NODE_ENV: test
+      PORT: "5177"
+      STORAGE_DRIVER: mysql
+      MYSQL_URL: mysql://hr_app:ci_database_password_123@127.0.0.1:3306/hr_resume_ci
+      MYSQL_AUTO_MIGRATE: "true"
+      MYSQL_POOL_SIZE: "5"
+      REDIS_URL: redis://127.0.0.1:6379/0
+      JWT_SECRET: ci-only-jwt-secret-with-more-than-32-random-characters
+      RUN_BACKGROUND_JOBS: "false"
+      CI_ADMIN_PASSWORD: GitHubActions_Admin_123
+      REPORTS_DIR: /tmp/hr-resume-ci-reports
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Node dependencies
+        run: npm ci
+      - name: Install PDF runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-reportlab fonts-noto-cjk
+      - name: Initialize MySQL schema and CI account
+        run: npm run ci:seed
+      - name: Start application
+        run: |
+          nohup npm start > /tmp/hr-resume-app.log 2>&1 &
+          echo $! > /tmp/hr-resume-app.pid
+      - name: Run full API integration test
+        run: npm run ci:verify
+      - name: Upload integration artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-artifacts
+          if-no-files-found: warn
+          path: |
+            /tmp/hr-resume-app.log
+            /tmp/hr-resume-ci-reports
+
+  docker-build:
+    name: Production Docker image
+    needs: unit-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t hr-resume-system:ci .
+      - name: Verify image runtimes and PDF generation
+        run: |
+          docker run --rm --entrypoint node hr-resume-system:ci --check backend/server.js
+          docker run --rm --entrypoint python3 hr-resume-system:ci -c "import reportlab"
+          printf '%s' '{"report":{"projectName":"CI","date":"2026-07-28","reportMonth":"2026-07","metrics":{},"currentDayMetrics":{},"distributions":{},"dailyJoinTrend":[],"byProject":[],"todayByProject":[]}}' \
+            | docker run -i --rm --entrypoint python3 hr-resume-system:ci backend/report_pdf_generator.py \
+            > /tmp/daily-report-smoke.pdf
+          test "$(head -c 5 /tmp/daily-report-smoke.pdf)" = "%PDF-"
+      - name: Upload PDF smoke-test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-smoke
+          path: /tmp/daily-report-smoke.pdf

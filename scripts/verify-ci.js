@@ -73,7 +73,7 @@ async function main() {
   assert.equal(updatedSettings.sendTime, "18:30");
 
   const project = await json(await request("/api/projects", {
-    method: "POST", headers, body: JSON.stringify({ name: "CircleCI 招聘项目" })
+    method: "POST", headers, body: JSON.stringify({ name: "CI 招聘项目" })
   }));
   const date = chinaDate();
   await json(await request(`/api/projects/${project.id}/month-config`, {
@@ -138,10 +138,10 @@ async function main() {
   const excelFile = Buffer.from(await excel.arrayBuffer());
   assert.equal(excelFile.subarray(0, 2).toString("ascii"), "PK");
 
-  console.log("CircleCI integration verification passed");
+  console.log("CI integration verification passed");
 }
 
 main().catch(error => {
-  console.error(`CircleCI integration verification failed: ${error.message}`);
+  console.error(`CI integration verification failed: ${error.message}`);
   process.exit(1);
 });
