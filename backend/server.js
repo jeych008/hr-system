@@ -10,6 +10,7 @@ const { createPasswordService } = require("./passwords");
 const { createSecurityState } = require("./security-state");
 const { createStorage } = require("./storage");
 const {
+  formatShanghaiDateTime,
   localClockParts,
   publicReportSettings,
   reportIsDue,
@@ -1223,7 +1224,7 @@ const distributionLabels = {
 
 function reportRows(report) {
   const rows = [];
-  if (report.date) rows.push(["日报日期", report.date], ["生成时间", report.generatedAt || ""], []);
+  if (report.date) rows.push(["日报日期", report.date], ["生成时间", formatShanghaiDateTime(report.generatedAt)], []);
   if (report.currentDayMetrics) {
     const todayLabels = {
       candidateCount: "今日新增候选人",

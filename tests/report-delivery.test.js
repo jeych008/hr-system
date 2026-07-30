@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  formatShanghaiDateTime,
   isTime,
   normalizeWebhookUrl,
   publicReportSettings,
@@ -8,6 +9,11 @@ const {
   sendIsDue,
   updateReportSettings
 } = require("../backend/report-delivery");
+
+test("UTC snapshot timestamps are displayed in Shanghai time", () => {
+  assert.equal(formatShanghaiDateTime("2026-07-30T10:00:00.000Z"), "2026-07-30 18:00:00");
+  assert.equal(formatShanghaiDateTime(""), "");
+});
 
 test("report time accepts only HH:mm", () => {
   assert.equal(isTime("00:00"), true);

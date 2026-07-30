@@ -3,6 +3,8 @@ import io
 import json
 import os
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from reportlab.graphics.shapes import Circle, Drawing, Line, PolyLine, Rect, String
 from reportlab.lib import colors
@@ -33,6 +35,19 @@ def register_font():
 
 
 FONT = register_font()
+
+
+def format_shanghai_datetime(value):
+    if not value:
+        return ""
+    text = str(value)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return text
 BLUE = colors.HexColor("#173B6C")
 ORANGE = colors.HexColor("#D97706")
 PRIMARY = colors.HexColor("#155EEF")
@@ -222,7 +237,7 @@ def build_pdf(report):
     }
     story = [
         para(f"{report.get('projectName', '招聘')}招聘日报", styles["title"]),
-        para(f"统计日期：{report.get('date', '-')}　生成时间：{str(report.get('generatedAt', '-')).replace('T', ' ')[:19]}", styles["meta"]),
+        para(f"统计日期：{report.get('date', '-')}　生成时间：{format_shanghai_datetime(report.get('generatedAt')) or '-'}", styles["meta"]),
         Spacer(1, 5 * mm), comparison_table(report, styles), Spacer(1, 4 * mm), metrics_table(report, styles),
     ]
     story += section_title(f"{report.get('reportMonth', '')} 每日入职人数", styles)

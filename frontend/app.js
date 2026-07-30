@@ -51,6 +51,24 @@ function dateOnly(value) {
   return String(value || "").slice(0, 10);
 }
 
+function formatShanghaiDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+}
+
 function isDateOnly(value) {
   return window.isValidDateOnly(value);
 }
@@ -1089,7 +1107,7 @@ async function renderDaily() {
     try {
       const query = new URLSearchParams({ projectId: $("#daily-project").value, date });
       const report = await api.get(`/api/reports/daily?${query.toString()}`);
-      $("#daily-box").innerHTML = `<div class="snapshot-heading"><h3>${h(report.projectName || "招聘")}招聘日报</h3><span>${h(report.date)} 固化快照 · ${h(String(report.generatedAt || "").replace("T", " ").slice(0, 19))}</span></div>${renderRecruitmentReport(report)}`;
+      $("#daily-box").innerHTML = `<div class="snapshot-heading"><h3>${h(report.projectName || "招聘")}招聘日报</h3><span>${h(report.date)} 固化快照 · ${h(formatShanghaiDateTime(report.generatedAt))}</span></div>${renderRecruitmentReport(report)}`;
     } catch (err) { $("#daily-box").innerHTML = `<div class="notice">${h(err.message)}</div>`; }
   };
 

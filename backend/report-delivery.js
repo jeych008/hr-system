@@ -82,6 +82,24 @@ function localClockParts(now = new Date()) {
   return { date: `${values.year}-${values.month}-${values.day}`, time: `${values.hour}:${values.minute}` };
 }
 
+function formatShanghaiDateTime(value) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+}
+
 function reportIsDue(settings, now = new Date()) {
   const local = localClockParts(now);
   return isTime(settings.sendTime) && local.time >= settings.sendTime && settings.lastGeneratedDate !== local.date;
@@ -126,6 +144,7 @@ async function sendWechatFile(webhookUrl, filePath, fileName, fetchImpl = fetch)
 
 module.exports = {
   DEFAULT_REPORT_SETTINGS,
+  formatShanghaiDateTime,
   isTime,
   localClockParts,
   normalizeWebhookUrl,
