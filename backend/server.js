@@ -208,9 +208,16 @@ function readJsonDb() {
       "failedReason",
       "joinedAt",
       "joinedBy",
+      "trainingStartedAt",
+      "trainingStartedBy",
+      "trainingEndedAt",
+      "trainingEndedBy",
+      "activeAt",
+      "activeBy",
       "leftAt",
       "leftBy",
       "leftReason",
+      "leftFromStatus",
       "abandonAt",
       "abandonBy",
       "abandonReason",
@@ -399,6 +406,9 @@ function candidateListView(c) {
     plannedJoinDate: c.plannedJoinDate || "",
     failedReason: c.failedReason || "",
     joinedAt: c.joinedAt || "",
+    trainingStartedAt: c.trainingStartedAt || "",
+    trainingEndedAt: c.trainingEndedAt || "",
+    activeAt: c.activeAt || "",
     leftAt: c.leftAt || "",
     leftReason: c.leftReason || "",
     abandonReason: c.abandonReason || ""
@@ -473,13 +483,15 @@ const statusLabels = {
   PASSED: "已通过",
   FAILED: "未通过",
   PENDING_ONBOARD_CONFIRM: "待入职确认",
-  ONBOARD: "已入职",
+  TRAINING: "培训中",
+  ACTIVE: "在职",
   LEFT: "已离职",
   ABANDONED: "放弃入职"
 };
 
 function candidateStatus(c, date = localDate()) {
-  if ((c.employmentStatus || "CANDIDATE") === "ONBOARD") return "ONBOARD";
+  if (["ONBOARD", "ACTIVE"].includes(c.employmentStatus)) return "ACTIVE";
+  if (c.employmentStatus === "TRAINING") return "TRAINING";
   if (c.employmentStatus === "LEFT") return "LEFT";
   if (c.employmentStatus === "ABANDONED") return "ABANDONED";
   if (c.failedAt) return "FAILED";
@@ -490,16 +502,16 @@ function candidateStatus(c, date = localDate()) {
 }
 
 function candidateLeftDate(c) {
-  return c.leftAt || c.updatedAt || c.createdAt || "";
+  return c.leftAt || "";
 }
 
 function countLeftCandidates(db, projectIds, from, to) {
   const allowed = new Set(projectIds);
-  return db.candidates.filter(c =>
-    allowed.has(c.projectId) &&
-    candidateStatus(c) === "LEFT" &&
-    dateInRange(candidateLeftDate(c), from, to)
-  ).length;
+  return db.candidates.filter(c => {
+    if (!allowed.has(c.projectId) || candidateStatus(c) !== "LEFT") return false;
+    if (!from && !to) return true;
+    return Boolean(candidateLeftDate(c)) && dateInRange(candidateLeftDate(c), from, to);
+  }).length;
 }
 
 function candidateStatusLabel(c) {
@@ -508,7 +520,8 @@ function candidateStatusLabel(c) {
 
 function candidateGroupOf(c) {
   const status = candidateStatus(c);
-  if (status === "ONBOARD") return "onboard";
+  if (status === "TRAINING") return "training";
+  if (status === "ACTIVE") return "onboard";
   if (status === "LEFT") return "left";
   if (status === "ABANDONED") return "abandoned";
   return "candidates";
@@ -531,9 +544,16 @@ function candidateWorkflowDefaults() {
     failedReason: null,
     joinedAt: null,
     joinedBy: null,
+    trainingStartedAt: null,
+    trainingStartedBy: null,
+    trainingEndedAt: null,
+    trainingEndedBy: null,
+    activeAt: null,
+    activeBy: null,
     leftAt: null,
     leftBy: null,
     leftReason: null,
+    leftFromStatus: null,
     abandonAt: null,
     abandonBy: null,
     abandonReason: null,
@@ -549,8 +569,9 @@ function latestMonthlyConfig(db, projectId, month) {
 function headcount(db, projectId, date = localDate()) {
   const month = localMonth(date);
   const cfg = latestMonthlyConfig(db, projectId, month);
-  const onboard = db.candidates.filter(c => c.projectId === projectId && candidateStatus(c) === "ONBOARD").length;
-  return { onboard, gap: cfg.targetHc - onboard, targetHc: cfg.targetHc };
+  const onboard = db.candidates.filter(c => c.projectId === projectId && candidateStatus(c) === "ACTIVE").length;
+  const training = db.candidates.filter(c => c.projectId === projectId && candidateStatus(c) === "TRAINING").length;
+  return { onboard, training, gap: cfg.targetHc - onboard, targetHc: cfg.targetHc };
 }
 
 function candidateStats(candidates) {
@@ -568,7 +589,8 @@ function autoCounts(db, projectId, date) {
   const passed = db.candidates.filter(c => c.projectId === projectId && sameDay(c.passedAt, date));
   const joined = db.candidates.filter(c => c.projectId === projectId && sameDay(c.joinedAt, date));
   const left = db.candidates.filter(c => c.projectId === projectId && candidateStatus(c) === "LEFT" && sameDay(c.leftAt, date));
-  return { newCandidateCount: created.length, arrivedCount: arrived.length, passedCount: passed.length, joinedCount: joined.length, leftCount: left.length };
+  const training = db.candidates.filter(c => c.projectId === projectId && candidateStatus(c) === "TRAINING");
+  return { newCandidateCount: created.length, arrivedCount: arrived.length, passedCount: passed.length, joinedCount: joined.length, leftCount: left.length, trainingCount: training.length };
 }
 
 function todayProjectStats(db, projectIds, date = localDate()) {
@@ -587,11 +609,11 @@ function todayProjectStats(db, projectIds, date = localDate()) {
 
 function countJoinedCandidates(db, projectIds, from, to) {
   const allowed = new Set(projectIds);
-  return db.candidates.filter(c =>
-    allowed.has(c.projectId) &&
-    c.joinedAt &&
-    dateInRange(c.joinedAt, from, to)
-  ).length;
+  return db.candidates.filter(c => {
+    if (!allowed.has(c.projectId)) return false;
+    if (!from && !to) return Boolean(c.joinedAt) || ["TRAINING", "ACTIVE", "LEFT"].includes(candidateStatus(c));
+    return Boolean(c.joinedAt) && dateInRange(c.joinedAt, from, to);
+  }).length;
 }
 
 function dailyJoinTrend(db, projectIds, month) {
@@ -616,7 +638,7 @@ function generateEntryReminders(db) {
   let changed = false;
   for (const candidate of db.candidates || []) {
     if (!candidate.plannedJoinDate || candidate.plannedJoinDate !== tomorrow) continue;
-    if (candidateStatus(candidate) === "ONBOARD" || candidateStatus(candidate) === "LEFT" || candidateStatus(candidate) === "ABANDONED") continue;
+    if (["TRAINING", "ACTIVE", "LEFT", "ABANDONED"].includes(candidateStatus(candidate))) continue;
     const recipients = (db.users || []).filter(user => user.role === "HR" && projectAllowed(user, candidate.projectId));
     for (const hr of recipients) {
       const exists = (db.systemMessages || []).some(msg => msg.type === "JOIN_TOMORROW" && msg.candidateId === candidate.id && msg.userId === hr.id && msg.messageDate === tomorrow);
@@ -1167,21 +1189,27 @@ function cumulativeReport(db, projectId, from, to, allowedProjectIds = null, inc
   const allowed = new Set(projectIds);
   const inProject = item => allowed.has(item.projectId);
   const candidates = db.candidates.filter(c => inProject(c) && dateInRange(c.createdAt, from, to));
-  const arrived = db.candidates.filter(c => inProject(c) && c.arrivedAt && dateInRange(c.arrivedAt, from, to));
-  const passed = db.candidates.filter(c => inProject(c) && c.passedAt && dateInRange(c.passedAt, from, to));
+  const arrived = db.candidates.filter(c => inProject(c) && (
+    !from && !to ? Boolean(c.arrived || c.arrivedAt) : Boolean(c.arrivedAt) && dateInRange(c.arrivedAt, from, to)
+  ));
+  const passed = db.candidates.filter(c => inProject(c) && (
+    !from && !to ? Boolean(c.passed || c.passedAt) : Boolean(c.passedAt) && dateInRange(c.passedAt, from, to)
+  ));
   const currentHc = projectIds.reduce((sum, pid) => {
     const hc = headcount(db, pid, to || localDate());
     sum.onboard += hc.onboard;
+    sum.training += hc.training;
     sum.gap += hc.gap;
     sum.targetHc += hc.targetHc;
     return sum;
-  }, { onboard: 0, gap: 0, targetHc: 0 });
+  }, { onboard: 0, training: 0, gap: 0, targetHc: 0 });
   const metrics = {
     candidateCount: candidates.length,
     arrivedCount: arrived.length,
     passedCount: passed.length,
     joinedCount: countJoinedCandidates(db, projectIds, from, to),
     leftCount: countLeftCandidates(db, projectIds, from, to),
+    trainingCount: currentHc.training,
     onboardCount: currentHc.onboard,
     remainingGap: currentHc.gap,
     passRate: arrived.length ? Number((passed.length / arrived.length * 100).toFixed(2)) : 0,
@@ -1209,6 +1237,7 @@ const metricLabels = {
   passedCount: "通过人数",
   joinedCount: "入职人数",
   leftCount: "离职人数",
+  trainingCount: "当前培训中人数",
   onboardCount: "当前在岗人数",
   remainingGap: "当前剩余缺口",
   passRate: "总通过率",
@@ -1257,7 +1286,7 @@ function reportRows(report) {
     for (const item of report.dailyJoinTrend) rows.push([item.date, item.count]);
   }
   if (report.byProject?.length) {
-    rows.push([], ["按项目统计"], ["项目", "累计候选人", "到面人数", "通过人数", "入职人数", "离职人数", "当前在岗人数", "当前剩余缺口", "总通过率", "目标完成率"]);
+    rows.push([], ["按项目统计"], ["项目", "累计候选人", "到面人数", "通过人数", "入职人数", "离职人数", "培训中人数", "当前在岗人数", "当前剩余缺口", "总通过率", "目标完成率"]);
     for (const item of report.byProject) {
       rows.push([
         item.projectName,
@@ -1266,6 +1295,7 @@ function reportRows(report) {
         item.passedCount,
         item.joinedCount,
         item.leftCount,
+        item.trainingCount,
         item.onboardCount,
         item.remainingGap,
         `${item.passRate}%`,
@@ -1274,7 +1304,7 @@ function reportRows(report) {
     }
   }
   if (report.todayByProject?.length) {
-    rows.push([], ["今日各项目招聘数据"], ["项目", "日期", "今日新增候选人", "今日到面人数", "今日通过人数", "今日入职人数", "今日离职人数", "当前在职人数"]);
+    rows.push([], ["今日各项目招聘数据"], ["项目", "日期", "今日新增候选人", "今日到面人数", "今日通过人数", "今日入职人数", "今日离职人数", "培训中人数", "当前在职人数"]);
     for (const item of report.todayByProject) {
       rows.push([
         item.projectName,
@@ -1284,6 +1314,7 @@ function reportRows(report) {
         item.passedCount,
         item.joinedCount,
         item.leftCount,
+        item.trainingCount,
         item.onboardCount
       ]);
     }
@@ -1509,7 +1540,9 @@ async function api(req, res, pathname, searchParams) {
         todayNew: visible.filter(c => sameDay(c.createdAt, today)).length,
         arrivedCount: visible.filter(c => c.arrived).length,
         passedCount: visible.filter(c => c.passed).length,
-        onboardCount: visible.filter(c => candidateStatus(c) === "ONBOARD").length,
+        joinedCount: visible.filter(c => Boolean(c.joinedAt) || ["TRAINING", "ACTIVE", "LEFT"].includes(candidateStatus(c))).length,
+        trainingCount: visible.filter(c => candidateStatus(c) === "TRAINING").length,
+        onboardCount: visible.filter(c => candidateStatus(c) === "ACTIVE").length,
         leftCount: visible.filter(c => candidateStatus(c) === "LEFT").length
       },
       messages
@@ -1524,13 +1557,14 @@ async function api(req, res, pathname, searchParams) {
     let items = db.candidates
       .filter(c => !projectId || c.projectId === projectId)
       .filter(c => projectAllowed(user, c.projectId));
-    if (group === "onboard") items = items.filter(c => candidateStatus(c) === "ONBOARD");
+    if (group === "training") items = items.filter(c => candidateStatus(c) === "TRAINING");
+    else if (group === "onboard") items = items.filter(c => candidateStatus(c) === "ACTIVE");
     else if (group === "left") items = items.filter(c => candidateStatus(c) === "LEFT");
     else if (group === "abandoned") items = items.filter(c => candidateStatus(c) === "ABANDONED");
     else items = items.filter(c => candidateGroupOf(c) === "candidates");
     if (status) items = items.filter(c => candidateStatus(c) === status);
     if (keyword) items = items.filter(c => [c.name, c.phone, c.idCard, c.email, c.appliedPosition].some(v => String(v || "").includes(keyword)));
-    const sortValue = c => group === "onboard" ? c.joinedAt : group === "left" ? c.leftAt : group === "abandoned" ? c.abandonAt : c.createdAt;
+    const sortValue = c => group === "training" ? c.trainingStartedAt : group === "onboard" ? (c.activeAt || c.joinedAt) : group === "left" ? c.leftAt : group === "abandoned" ? c.abandonAt : c.createdAt;
     return send(res, 200, { items: items.sort((a, b) => String(sortValue(b) || b.createdAt || "").localeCompare(String(sortValue(a) || a.createdAt || ""))).map(candidateListView) });
   }
 
@@ -1599,7 +1633,7 @@ async function api(req, res, pathname, searchParams) {
     if (type === "passed" && !c.arrived && !body.force) {
       return bad(res, "该候选人尚未标记到面，确认通过吗？", 409, { confirmRequired: true });
     }
-    if (["LEFT", "ABANDONED"].includes(current)) return bad(res, "离职或放弃入职人员不可继续变更候选人状态");
+    if (["LEFT", "ABANDONED"].includes(current)) return bad(res, "离职或放弃入职人员不可继续变更状态");
     const before = JSON.parse(JSON.stringify(c));
     if (type === "arrived") {
       if (!["PENDING", "ARRIVED", "PASSED", "PENDING_ONBOARD_CONFIRM"].includes(current)) return bad(res, "当前状态不可标记到面");
@@ -1630,27 +1664,47 @@ async function api(req, res, pathname, searchParams) {
       c.failedReason = String(body.reason).trim();
       c.employmentStatus = "CANDIDATE";
     } else if (type === "onboard") {
-      if (!c.passed || !c.plannedJoinDate) return bad(res, "仅已通过且设置入职时间的候选人可确认入职");
-      c.employmentStatus = "ONBOARD";
+      if (!["PASSED", "PENDING_ONBOARD_CONFIRM"].includes(current) || !c.passed || !c.plannedJoinDate) {
+        return bad(res, "仅已通过且设置入职时间的候选人可确认入职");
+      }
+      c.employmentStatus = "TRAINING";
       c.joinedAt = nowIso();
       c.joinedBy = user.id;
+      c.trainingStartedAt = c.joinedAt;
+      c.trainingStartedBy = user.id;
+      c.trainingEndedAt = null;
+      c.trainingEndedBy = null;
+      c.activeAt = null;
+      c.activeBy = null;
       c.leftAt = null;
       c.leftBy = null;
       c.leftReason = null;
+      c.leftFromStatus = null;
       c.abandonAt = null;
       c.abandonBy = null;
       c.abandonReason = null;
+    } else if (type === "activate") {
+      if (current !== "TRAINING") return bad(res, "仅培训中人员可转为在职");
+      if (!isDateOnly(body.trainingEndDate)) return bad(res, "培训结束日期为必填，格式应为 yyyy-MM-dd");
+      if (body.trainingEndDate > localDate()) return bad(res, "培训结束日期不能晚于今天");
+      if (body.trainingEndDate < localDatePart(c.trainingStartedAt || c.joinedAt)) return bad(res, "培训结束日期不能早于培训开始日期");
+      c.employmentStatus = "ACTIVE";
+      c.trainingEndedAt = body.trainingEndDate;
+      c.trainingEndedBy = user.id;
+      c.activeAt = body.trainingEndDate;
+      c.activeBy = user.id;
     } else if (type === "left") {
       const reasonError = validateReason(body.reason, "离职原因");
       if (reasonError) return bad(res, reasonError);
-      if (current === "ONBOARD" || candidateGroupOf(c) === "candidates") {
-        c.employmentStatus = "LEFT";
-        c.leftAt = nowIso();
-        c.leftBy = user.id;
-        c.leftReason = String(body.reason).trim();
-      } else {
-        return bad(res, "当前状态不可办理离职");
-      }
+      if (!isDateOnly(body.leftDate)) return bad(res, "离职日期为必填，格式应为 yyyy-MM-dd");
+      if (body.leftDate > localDate()) return bad(res, "离职日期不能晚于今天");
+      if (!["TRAINING", "ACTIVE"].includes(current)) return bad(res, "仅培训中或在职人员可办理离职");
+      if (c.joinedAt && body.leftDate < localDatePart(c.joinedAt)) return bad(res, "离职日期不能早于实际入职日期");
+      c.employmentStatus = "LEFT";
+      c.leftAt = body.leftDate;
+      c.leftBy = user.id;
+      c.leftReason = String(body.reason).trim();
+      c.leftFromStatus = current;
     } else if (type === "abandon") {
       const reasonError = validateReason(body.reason, "放弃原因");
       if (reasonError) return bad(res, reasonError);

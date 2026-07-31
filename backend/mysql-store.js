@@ -3,6 +3,10 @@ const path = require("path");
 
 const SCHEMA_FILE = path.join(__dirname, "mysql-schema.sql");
 const SCHEMA_VERSION = 2;
+const COUNT_TABLES = new Set([
+  "users", "projects", "monthly_configs", "candidates", "daily_reports",
+  "audit_logs", "violation_logs", "system_messages", "system_settings"
+]);
 
 function mysqlOptions(config) {
   const url = new URL(config.mysqlUrl);
@@ -94,7 +98,7 @@ function createMysqlStore(config) {
     if (rows.length) await insertBatches(connection, sqlPrefix, rows, rowWidth);
   }
 
-  async function write(db) {
+  async function write(db, options = {}) {
     const connection = await pool.getConnection();
     let namedLock = false;
     try {
@@ -123,12 +127,25 @@ function createMysqlStore(config) {
       await replace(connection, "system_settings", "INSERT INTO system_settings (setting_key,payload)",
         db.systemSettings ? [["report_delivery", JSON.stringify(db.systemSettings)]] : [], 2);
 
-      await append(connection, "INSERT IGNORE INTO daily_reports (id,project_id,report_date,locked,generated_at,payload)",
+      const writeHistory = (table, sqlPrefix, rows, rowWidth) => options.replaceHistory === true
+        ? replace(connection, table, sqlPrefix, rows, rowWidth)
+        : append(connection, sqlPrefix, rows, rowWidth);
+      await writeHistory("daily_reports", "INSERT IGNORE INTO daily_reports (id,project_id,report_date,locked,generated_at,payload)",
         (db.dailyReports || []).map(item => [item.id, item.projectId, item.date, 1, mysqlDate(item.generatedAt), JSON.stringify(item)]), 6);
-      await append(connection, "INSERT IGNORE INTO audit_logs (id,actor_id,entity_type,entity_id,action,created_at,payload)",
+      await writeHistory("audit_logs", "INSERT IGNORE INTO audit_logs (id,actor_id,entity_type,entity_id,action,created_at,payload)",
         (db.auditLogs || []).map(item => [item.id, item.actorId || null, item.entityType || "CANDIDATE", item.entityId || "", item.action || "UNKNOWN", mysqlDate(item.createdAt), JSON.stringify(item)]), 7);
-      await append(connection, "INSERT IGNORE INTO violation_logs (id,project_id,created_at,payload)",
+      await writeHistory("violation_logs", "INSERT IGNORE INTO violation_logs (id,project_id,created_at,payload)",
         (db.violationLogs || []).map(item => [item.id, item.projectId || null, mysqlDate(item.createdAt), JSON.stringify(item)]), 4);
+
+      for (const [table, expected] of Object.entries(options.expectedCounts || {})) {
+        if (!COUNT_TABLES.has(table) || !Number.isSafeInteger(expected) || expected < 0) {
+          throw new Error(`Invalid expected row count for ${table}`);
+        }
+        const [[row]] = await connection.query(`SELECT COUNT(*) AS count FROM ${table}`);
+        if (Number(row.count) !== expected) {
+          throw new Error(`Row count verification failed for ${table}: ${row.count}, expected ${expected}`);
+        }
+      }
 
       await connection.query("UPDATE app_metadata SET data_version = data_version + 1, schema_version = ? WHERE id = 1", [SCHEMA_VERSION]);
       await connection.commit();
@@ -143,7 +160,7 @@ function createMysqlStore(config) {
   }
 
   async function counts() {
-    const names = ["users", "projects", "monthly_configs", "candidates", "daily_reports", "audit_logs", "violation_logs", "system_messages", "system_settings"];
+    const names = [...COUNT_TABLES];
     const values = await Promise.all(names.map(async name => {
       const [[row]] = await pool.query(`SELECT COUNT(*) AS count FROM ${name}`);
       return [name, Number(row.count)];

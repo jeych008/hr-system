@@ -23,6 +23,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 COPY backend ./backend
 COPY frontend ./frontend
+COPY scripts ./scripts
 RUN mkdir -p /app/data/reports && chown -R node:node /app/data
 
 USER node

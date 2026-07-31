@@ -86,6 +86,7 @@ const MANDARIN_OPTIONS = ["未评级", "一甲", "一乙", "二甲", "二乙", "
 const CHANNEL_OPTIONS = ["BOSS直聘", "58同城", "本地招聘网", "现场招聘会", "亲友介绍", "社区推荐", "其他"];
 const CANDIDATE_GROUPS = [
   ["candidates", "候选人"],
+  ["training", "培训人员"],
   ["onboard", "在职人员"],
   ["left", "离职人员"],
   ["abandoned", "放弃入职"]
@@ -96,13 +97,15 @@ const STATUS_LABELS = {
   PASSED: "已通过",
   FAILED: "未通过",
   PENDING_ONBOARD_CONFIRM: "待入职确认",
-  ONBOARD: "已入职",
+  TRAINING: "培训中",
+  ACTIVE: "在职",
   LEFT: "已离职",
   ABANDONED: "放弃入职"
 };
 const STATUS_FILTERS = {
   candidates: ["PENDING", "ARRIVED", "PASSED", "FAILED", "PENDING_ONBOARD_CONFIRM"],
-  onboard: ["ONBOARD"],
+  training: ["TRAINING"],
+  onboard: ["ACTIVE"],
   left: ["LEFT"],
   abandoned: ["ABANDONED"]
 };
@@ -483,6 +486,7 @@ async function renderCandidates() {
   document.querySelectorAll("[data-abandon]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.abandon, "abandon"));
   document.querySelectorAll("[data-reschedule]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.reschedule, "reschedule"));
   document.querySelectorAll("[data-left-employee]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.leftEmployee, "left"));
+  document.querySelectorAll("[data-activate]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.activate, "activate"));
   document.querySelectorAll("[data-preview]").forEach(b => b.onclick = () => openResumePreview(b.dataset.preview));
   document.querySelectorAll("[data-pdf]").forEach(b => b.onclick = () => download(`/api/export/candidates.pdf?ids=${b.dataset.pdf}`));
   $("#download-pdf").onclick = () => {
@@ -496,10 +500,11 @@ function renderCandidateDashboard(data) {
   const metrics = data.metrics || {};
   const cards = [
     ["在职员工数量", metrics.onboardCount || 0],
+    ["培训中", metrics.trainingCount || 0],
     ["今日新增", metrics.todayNew || 0],
     ["已到面", metrics.arrivedCount || 0],
     ["已通过", metrics.passedCount || 0],
-    ["已入职", metrics.onboardCount || 0],
+    ["累计入职", metrics.joinedCount || 0],
     ["已离职", metrics.leftCount || 0]
   ];
   const messages = (data.messages || []).map(msg => `<div class="notice">${h(msg.message)}</div>`).join("");
@@ -508,13 +513,14 @@ function renderCandidateDashboard(data) {
 
 function statusBadge(code) {
   const label = STATUS_LABELS[code] || "待处理";
-  const cls = code === "ONBOARD" || code === "ARRIVED" || code === "PASSED" ? "ok" : code === "FAILED" || code === "LEFT" || code === "ABANDONED" ? "danger" : code === "PENDING_ONBOARD_CONFIRM" ? "warn" : "";
+  const cls = code === "ACTIVE" || code === "ARRIVED" || code === "PASSED" ? "ok" : code === "FAILED" || code === "LEFT" || code === "ABANDONED" ? "danger" : ["PENDING_ONBOARD_CONFIRM", "TRAINING"].includes(code) ? "warn" : "";
   return `<span class="badge ${cls}">${h(label)}</span>`;
 }
 
 function renderCandidateStatusDetail(c) {
   if (c.statusCode === "PASSED" || c.statusCode === "PENDING_ONBOARD_CONFIRM") return `计划入职：${h(c.plannedJoinDate || "-")}`;
-  if (c.statusCode === "ONBOARD") return `实际入职：${h(dateOnly(c.joinedAt) || "-")}`;
+  if (c.statusCode === "TRAINING") return `实际入职：${h(dateOnly(c.joinedAt) || "-")}<br>培训开始：${h(dateOnly(c.trainingStartedAt) || "-")}`;
+  if (c.statusCode === "ACTIVE") return `实际入职：${h(dateOnly(c.joinedAt) || "-")}<br>转在职：${h(dateOnly(c.activeAt) || "-")}`;
   if (c.statusCode === "FAILED") return `未通过原因：${h(c.failedReason || "-")}`;
   if (c.statusCode === "LEFT") return `离职日期：${h(dateOnly(c.leftAt) || "-")}<br>${h(c.leftReason || "")}`;
   if (c.statusCode === "ABANDONED") return `放弃原因：${h(c.abandonReason || "-")}`;
@@ -531,13 +537,13 @@ function renderCandidateActions(c, writable, group) {
         <option value="passed">通过</option>
         <option value="failed">不通过</option>
         <option value="onboard">入职</option>
-        <option value="left">离职</option>
       </select>
       ${c.statusCode === "PENDING_ONBOARD_CONFIRM" ? `
         <button data-confirm-onboard="${h(c.id)}">确认入职</button>
         <button data-abandon="${h(c.id)}">放弃入职</button>
         <button data-reschedule="${h(c.id)}">更改入职时间</button>` : ""}`;
   }
+  if (group === "training") return `<button data-activate="${h(c.id)}">转为在职</button><button class="danger" data-left-employee="${h(c.id)}">离职</button>`;
   if (group === "onboard") return `<button class="danger" data-left-employee="${h(c.id)}">离职</button>`;
   return "";
 }
@@ -579,7 +585,7 @@ function openStatusDialog(id, type) {
     return postCandidateStatus(id, { type });
   }
   if (type === "onboard") {
-    if (!confirm("确认入职吗？系统将自动记录今天为实际入职日期。")) return;
+    if (!confirm("确认入职并进入培训吗？系统将自动记录今天为实际入职和培训开始日期。")) return;
     return postCandidateStatus(id, { type });
   }
   const modal = $("#modal");
@@ -587,11 +593,33 @@ function openStatusDialog(id, type) {
   const configs = {
     passed: { title: "标记通过", label: "入职时间", control: "date", payloadKey: "plannedJoinDate", submit: "确认通过" },
     failed: { title: "标记不通过", label: "未通过原因", control: "textarea", payloadKey: "reason", submit: "确认不通过" },
-    left: { title: "办理离职", label: "离职原因", control: "textarea", payloadKey: "reason", submit: "确认离职" },
+    activate: { title: "培训结束并转为在职", label: "培训结束日期", control: "date", payloadKey: "trainingEndDate", submit: "确认转为在职" },
     abandon: { title: "放弃入职", label: "放弃原因", control: "textarea", payloadKey: "reason", submit: "确认放弃" },
     reschedule: { title: "更改入职时间", label: "新的入职时间", control: "date", payloadKey: "plannedJoinDate", submit: "保存" }
   };
   const cfg = configs[type];
+  if (type === "left") {
+    modal.querySelector("#modal-body").innerHTML = `
+      <div class="modal-head"><h3>办理离职</h3><button id="close-modal">关闭</button></div>
+      <div class="form-grid">
+        <label>离职日期<input id="status-left-date" type="date" data-date-only value="${today()}" required></label>
+        <label class="form-wide">离职原因<textarea id="status-value" maxlength="200" required></textarea><span class="counter" id="status-count">0/200</span></label>
+      </div><br>
+      <button class="primary" id="submit-status">确认离职</button>`;
+    modal.classList.add("open");
+    $("#close-modal").onclick = () => modal.classList.remove("open");
+    bindDateOnlyInputs(modal);
+    $("#status-value").oninput = () => { $("#status-count").textContent = `${$("#status-value").value.length}/200`; };
+    $("#submit-status").onclick = () => {
+      const reason = $("#status-value").value.trim();
+      const leftDate = $("#status-left-date").value;
+      if (!isDateOnly(leftDate)) return alert("离职日期为必填");
+      if (!reason) return alert("离职原因为必填");
+      if (reason.length > 200) return alert("离职原因最多200字");
+      postCandidateStatus(id, { type, reason, leftDate });
+    };
+    return;
+  }
   if (!cfg) return alert("状态类型错误");
   modal.querySelector("#modal-body").innerHTML = `
     <div class="modal-head"><h3>${h(cfg.title)}</h3><button id="close-modal">关闭</button></div>
@@ -815,6 +843,7 @@ function renderMetrics(metrics, keys = null) {
     passedCount: "通过人数",
     joinedCount: "入职人数",
     leftCount: "离职人数",
+    trainingCount: "当前培训中人数",
     onboardCount: "当前在岗人数",
     remainingGap: "当前剩余缺口",
     passRate: "总通过率",
@@ -923,7 +952,7 @@ function renderProjectStats(items = []) {
     <section class="panel">
       <h3>按项目统计</h3>
       <table>
-        <thead><tr><th>项目</th><th>累计候选人</th><th>到面人数</th><th>通过人数</th><th>入职人数</th><th>离职人数</th><th>当前在岗</th><th>剩余缺口</th><th>总通过率</th><th>目标完成率</th></tr></thead>
+        <thead><tr><th>项目</th><th>累计候选人</th><th>到面人数</th><th>通过人数</th><th>入职人数</th><th>离职人数</th><th>培训中</th><th>当前在岗</th><th>剩余缺口</th><th>总通过率</th><th>目标完成率</th></tr></thead>
         <tbody>${items.map(item => `
           <tr>
             <td>${h(item.projectName)}</td>
@@ -932,6 +961,7 @@ function renderProjectStats(items = []) {
             <td>${h(item.passedCount)}</td>
             <td>${h(item.joinedCount)}</td>
             <td>${h(item.leftCount)}</td>
+            <td>${h(item.trainingCount || 0)}</td>
             <td>${h(item.onboardCount)}</td>
             <td>${h(item.remainingGap)}</td>
             <td>${h(item.passRate)}%</td>
@@ -960,7 +990,7 @@ function renderTodayProjectStats(items = []) {
       </div>
       <h3 class="project-today-table-title">当日各项目招聘数据</h3>
       <table>
-        <thead><tr><th>项目</th><th>日期</th><th>当日新增</th><th>当日到面</th><th>当日通过</th><th>当日入职</th><th>当日离职</th><th>当前在职</th></tr></thead>
+        <thead><tr><th>项目</th><th>日期</th><th>当日新增</th><th>当日到面</th><th>当日通过</th><th>当日入职</th><th>当日离职</th><th>培训中</th><th>当前在职</th></tr></thead>
         <tbody>${items.map(item => `<tr>
           <td>${h(item.projectName)}</td>
           <td>${h(item.date)}</td>
@@ -969,6 +999,7 @@ function renderTodayProjectStats(items = []) {
           <td>${h(item.passedCount)}</td>
           <td>${h(item.joinedCount)}</td>
           <td>${h(item.leftCount)}</td>
+          <td>${h(item.trainingCount || 0)}</td>
           <td>${h(item.onboardCount)}</td>
         </tr>`).join("")}</tbody>
       </table>
@@ -982,7 +1013,7 @@ function renderRecruitmentReport(report = {}) {
     candidateCount: current.candidateCount ?? current.newCandidateCount ?? 0
   };
   const metrics = report.metrics || {};
-  const secondaryMetrics = ["onboardCount", "remainingGap", "passRate", "hcCompletionRate"];
+  const secondaryMetrics = ["trainingCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"];
   return renderRecruitmentComparison(currentDayMetrics, metrics) +
     "<br>" + renderMetrics(metrics, secondaryMetrics) +
     renderJoinTrend(report.dailyJoinTrend || [], report.reportMonth || "") +

@@ -95,6 +95,7 @@ def comparison_table(report, styles):
 def metrics_table(report, styles):
     metrics = report.get("metrics") or {}
     fields = [
+        ("当前培训中人数", "trainingCount", ""),
         ("当前在岗人数", "onboardCount", ""),
         ("当前剩余缺口", "remainingGap", ""),
         ("总通过率", "passRate", "%"),
@@ -104,7 +105,7 @@ def metrics_table(report, styles):
     for label, key, suffix in fields:
         data.append(para(label, styles["metric_label"]))
         data.append(para(f"{metrics.get(key, 0)}{suffix}", styles["metric_value"]))
-    table = Table([data], colWidths=[31 * mm, 31 * mm] * 4, rowHeights=[18 * mm])
+    table = Table([data], colWidths=[25 * mm, 25 * mm] * 5, rowHeights=[18 * mm])
     table.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.7, LINE),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, LINE),
@@ -171,13 +172,13 @@ def standard_table_style():
 
 def project_table(items, styles, today=False):
     if today:
-        headers = ["项目", "日期", "新增", "到面", "通过", "入职", "离职", "当前在职"]
-        keys = ["projectName", "date", "newCandidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "onboardCount"]
-        widths = [54, 25, 22, 22, 22, 22, 22, 28]
+        headers = ["项目", "日期", "新增", "到面", "通过", "入职", "离职", "培训中", "当前在职"]
+        keys = ["projectName", "date", "newCandidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "trainingCount", "onboardCount"]
+        widths = [46, 24, 20, 20, 20, 20, 20, 22, 25]
     else:
-        headers = ["项目", "累计候选人", "到面", "通过", "入职", "离职", "在岗", "缺口", "通过率", "目标完成率"]
-        keys = ["projectName", "candidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"]
-        widths = [48, 27, 21, 21, 21, 21, 21, 21, 25, 29]
+        headers = ["项目", "累计候选人", "到面", "通过", "入职", "离职", "培训中", "在岗", "缺口", "通过率", "目标完成率"]
+        keys = ["projectName", "candidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "trainingCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"]
+        widths = [43, 25, 19, 19, 19, 19, 21, 19, 19, 23, 27]
     rows = [[para(header, styles["table_head"]) for header in headers]]
     for item in items:
         values = []
