@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="${APP_DIR:-/opt/hr-resume-system}"
+BACKUP_DIR="${BACKUP_DIR:-${APP_DIR}/backups/automatic}"
+STATE_DIR="${STATE_DIR:-/var/lib/hr-resume-deploy}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-hr-resume-system}"
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/health/ready}"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+LOCK_FILE="${LOCK_FILE:-/var/lock/hr-resume-deploy.lock}"
+
+if [[ -r /etc/default/hr-resume-deploy ]]; then
+  # This file must remain root-owned and non-writable by the runner account.
+  # shellcheck disable=SC1091
+  source /etc/default/hr-resume-deploy
+fi
+
+log() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$*"
+}
+
+fail() {
+  log "ERROR: $*"
+  exit 1
+}
+
+[[ "${EUID}" -eq 0 ]] || fail "must run as root"
+[[ "$#" -eq 1 ]] || fail "usage: hr-resume-deploy <40-character-commit-sha>"
+TARGET_SHA="$1"
+[[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid commit SHA"
+[[ -d "$APP_DIR/.git" ]] || fail "application repository not found: $APP_DIR"
+[[ -f "$APP_DIR/.env" ]] || fail "production .env not found: $APP_DIR/.env"
+[[ "$(stat -c '%U:%G:%a' "$APP_DIR/.env")" == "root:root:600" ]] \
+  || fail "$APP_DIR/.env must be root:root mode 600"
+
+mkdir -p "$BACKUP_DIR" "$STATE_DIR"
+chmod 700 "$BACKUP_DIR" "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock -n 9 || fail "another production deployment is already running"
+
+cd "$APP_DIR"
+git diff-index --quiet HEAD -- || fail "tracked production files contain local changes"
+
+log "Fetching origin/main"
+git fetch --prune origin main
+REMOTE_SHA="$(git rev-parse origin/main)"
+[[ "$TARGET_SHA" == "$REMOTE_SHA" ]] \
+  || fail "requested commit is stale or is not current origin/main ($REMOTE_SHA)"
+git cat-file -e "${TARGET_SHA}^{commit}" || fail "requested commit does not exist"
+
+PREVIOUS_SHA="$(git rev-parse HEAD)"
+TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
+CURRENT_BACKUP="$BACKUP_DIR/${TIMESTAMP}-${PREVIOUS_SHA:0:12}"
+mkdir -p "$CURRENT_BACKUP"
+chmod 700 "$CURRENT_BACKUP"
+
+compose() {
+  docker compose --project-name "$COMPOSE_PROJECT" "$@"
+}
+
+backup_production() {
+  log "Backing up MySQL and report files to $CURRENT_BACKUP"
+  compose config --quiet
+  compose exec -T mysql sh -c \
+    'exec mysqldump --single-transaction --quick --routines --triggers --events -uroot -p"$MYSQL_ROOT_PASSWORD" hr_resume' \
+    | gzip -9 > "$CURRENT_BACKUP/mysql.sql.gz"
+  gzip -t "$CURRENT_BACKUP/mysql.sql.gz"
+  [[ -s "$CURRENT_BACKUP/mysql.sql.gz" ]] || fail "MySQL backup is empty"
+
+  local app_container
+  app_container="$(compose ps -q app)"
+  [[ -n "$app_container" ]] || fail "application container is not running"
+  docker run --rm --volumes-from "$app_container" nginx:1.27-alpine \
+    tar -C /app/data/reports -czf - . > "$CURRENT_BACKUP/reports.tar.gz"
+  tar -tzf "$CURRENT_BACKUP/reports.tar.gz" >/dev/null
+
+  install -o root -g root -m 600 "$APP_DIR/.env" "$CURRENT_BACKUP/env.backup"
+  printf '%s  %s\n' "$PREVIOUS_SHA" "previous-commit" > "$CURRENT_BACKUP/deployment.txt"
+  sha256sum "$CURRENT_BACKUP/mysql.sql.gz" "$CURRENT_BACKUP/reports.tar.gz" \
+    > "$CURRENT_BACKUP/SHA256SUMS"
+  chmod 600 "$CURRENT_BACKUP"/*
+}
+
+wait_for_app() {
+  local container status
+  container="$(compose ps -q app)"
+  [[ -n "$container" ]] || return 1
+  for _ in $(seq 1 60); do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+    [[ "$status" == "healthy" ]] && return 0
+    [[ "$status" == "unhealthy" || "$status" == "exited" || "$status" == "dead" ]] && return 1
+    sleep 2
+  done
+  return 1
+}
+
+wait_for_proxy() {
+  for _ in $(seq 1 30); do
+    curl --fail --silent --show-error --max-time 5 "$HEALTH_URL" >/dev/null && return 0
+    sleep 2
+  done
+  return 1
+}
+
+start_release() {
+  compose config --quiet
+  compose build --pull app
+  compose up -d --no-deps --force-recreate app
+  wait_for_app || return 1
+  compose up -d --no-deps --force-recreate nginx
+  wait_for_proxy
+}
+
+rollback() {
+  log "Deployment failed; rolling back to $PREVIOUS_SHA"
+  compose logs --no-color --tail=300 app nginx > "$CURRENT_BACKUP/failed-deployment.log" 2>&1 || true
+  chmod 600 "$CURRENT_BACKUP/failed-deployment.log" || true
+  git checkout --detach --force "$PREVIOUS_SHA"
+  if start_release; then
+    log "Rollback completed successfully"
+  else
+    log "CRITICAL: automatic rollback failed; production requires manual recovery"
+  fi
+}
+
+backup_production
+log "Deploying $TARGET_SHA (previous $PREVIOUS_SHA)"
+git checkout --detach --force "$TARGET_SHA"
+
+if ! start_release; then
+  rollback
+  exit 1
+fi
+
+printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/last-successful-sha"
+printf '%s\n' "$CURRENT_BACKUP" > "$STATE_DIR/last-backup"
+chmod 600 "$STATE_DIR"/*
+find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$BACKUP_RETENTION_DAYS" -exec rm -rf {} +
+docker image prune --force --filter 'until=168h' >/dev/null || true
+log "Deployment succeeded: $TARGET_SHA"

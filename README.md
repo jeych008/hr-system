@@ -76,3 +76,5 @@ docs/api.md             接口定义
 - 生产 Docker 镜像构建、ReportLab 运行时和日报 PDF 烟雾测试。
 
 GitHub Actions 不需要配置生产数据库或 Webhook 密钥。工作流使用隔离的临时账号和数据库，不会访问生产数据。可在仓库的 Actions 页面查看日志和下载日报 PDF 测试产物；建议为 `main` 启用分支保护，并要求三个 CI 任务通过后才能合并。
+
+生产服务器完成一次性自托管 Runner 配置后，`main` 的 CI 全部通过会自动备份、部署、健康检查并在失败时回滚。Runner 不持有生产密钥且不属于 Docker 组，具体步骤见 `docs/automatic-deployment.md`。

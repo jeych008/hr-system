@@ -1,0 +1,41 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy verified main commit
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: [self-hosted, linux, hr-production]
+    environment: production
+    timeout-minutes: 30
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Deploy exact verified commit
+        run: sudo -n /usr/local/sbin/hr-resume-deploy "$DEPLOY_SHA"
+
+      - name: Record deployment summary
+        run: |
+          {
+            echo "## Production deployment"
+            echo ""
+            echo "- Commit: \`$DEPLOY_SHA\`"
+            echo "- Runner: \`$RUNNER_NAME\`"
+            echo "- Completed: \`$(date -u '+%Y-%m-%dT%H:%M:%SZ')\`"
+          } >> "$GITHUB_STEP_SUMMARY"
