@@ -292,6 +292,7 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
   margin-bottom: 12px;
 }
 .toolbar label { min-width: 180px; }
+.flatpickr-input[readonly] { background: #fff; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
 .compact-grid { grid-template-columns: repeat(6, minmax(120px, 1fr)); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 12px; }

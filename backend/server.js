@@ -24,6 +24,13 @@ const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
 const DB_FILE = path.resolve(process.env.DATA_FILE || path.join(DATA_DIR, "db.json"));
 const FRONTEND_DIR = path.join(ROOT, "frontend");
+const VENDOR_FILES = new Map([
+  ["/vendor/flatpickr/flatpickr.min.css", path.join(ROOT, "node_modules/flatpickr/dist/flatpickr.min.css")],
+  ["/vendor/flatpickr/month-select.css", path.join(ROOT, "node_modules/flatpickr/dist/plugins/monthSelect/style.css")],
+  ["/vendor/flatpickr/flatpickr.min.js", path.join(ROOT, "node_modules/flatpickr/dist/flatpickr.min.js")],
+  ["/vendor/flatpickr/zh.js", path.join(ROOT, "node_modules/flatpickr/dist/l10n/zh.js")],
+  ["/vendor/flatpickr/month-select.js", path.join(ROOT, "node_modules/flatpickr/dist/plugins/monthSelect/index.js")]
+]);
 const PDF_GENERATOR = path.join(__dirname, "pdf_generator.py");
 const REPORT_PDF_GENERATOR = path.join(__dirname, "report_pdf_generator.py");
 const REPORTS_DIR = path.resolve(process.env.REPORTS_DIR || path.join(DATA_DIR, "reports"));
@@ -1859,6 +1866,12 @@ async function api(req, res, pathname, searchParams) {
 }
 
 function serveStatic(req, res, pathname) {
+  const vendorFile = VENDOR_FILES.get(pathname);
+  if (vendorFile) {
+    if (!fs.existsSync(vendorFile)) return text(res, 404, "Not found", "text/plain");
+    const contentType = path.extname(vendorFile) === ".css" ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8";
+    return text(res, 200, fs.readFileSync(vendorFile), contentType);
+  }
   const routeFile = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const file = path.resolve(FRONTEND_DIR, routeFile);
   if (file !== FRONTEND_DIR && !file.startsWith(`${FRONTEND_DIR}${path.sep}`)) return text(res, 403, "Forbidden", "text/plain");
