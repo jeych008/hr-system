@@ -731,7 +731,7 @@ function validateCandidate(data) {
   if (!["初中及以下", "高中", "中专或技校", "大专", "本科", "研究生", "博士"].includes(data.education)) return "学历选项不正确";
   if (!["未评级", "一甲", "一乙", "二甲", "二乙", "三甲", "三乙"].includes(data.mandarinLevel)) return "普通话水平选项不正确";
   const channel = String(data.recruitmentChannel || "").trim();
-  const channelOk = ["BOSS直聘", "58同城", "本地招聘网", "现场招聘会", "社区推荐"].includes(channel) ||
+  const channelOk = ["BOSS直聘", "58同城", "本地招聘网", "现场招聘会", "人力资源公司", "社区推荐"].includes(channel) ||
     (channel.startsWith("亲友介绍：") && channel.slice(5).trim()) ||
     (channel.startsWith("其他：") && channel.slice(3).trim());
   if (!channelOk) return "获知招聘信息渠道选项不正确";

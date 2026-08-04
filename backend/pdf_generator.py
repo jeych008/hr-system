@@ -270,7 +270,7 @@ def main():
         topMargin=12 * mm,
         bottomMargin=22 * mm,
         title="候选人简历",
-        author="在线简历收集系统",
+        author="人力资源管理平台",
         pageCompression=1,
     )
     story = []

@@ -83,7 +83,7 @@ function bindDateOnlyInputs(root = document) {
 
 const EDUCATION_OPTIONS = ["初中及以下", "高中", "中专或技校", "大专", "本科", "研究生", "博士"];
 const MANDARIN_OPTIONS = ["未评级", "一甲", "一乙", "二甲", "二乙", "三甲", "三乙"];
-const CHANNEL_OPTIONS = ["BOSS直聘", "58同城", "本地招聘网", "现场招聘会", "亲友介绍", "社区推荐", "其他"];
+const CHANNEL_OPTIONS = ["BOSS直聘", "58同城", "本地招聘网", "现场招聘会", "人力资源公司", "亲友介绍", "社区推荐", "其他"];
 const CANDIDATE_GROUPS = [
   ["candidates", "候选人"],
   ["training", "培训人员"],
@@ -253,7 +253,7 @@ async function loginPage() {
   app.innerHTML = `
     <main class="login">
       <section class="login-card">
-        <h1>在线简历收集系统</h1>
+        <h1>人力资源管理平台</h1>
         <p>请使用管理员分配的账号登录</p>
         <label>用户名<input id="username" autocomplete="username"></label><br>
         <label>密码<input id="password" type="password" autocomplete="current-password"></label><br>
@@ -314,7 +314,7 @@ function renderShell() {
   app.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
-        <div class="brand">简历收集运营平台</div>
+        <div class="brand">人力资源管理平台</div>
         <div class="nav">${navItems().map(([key, label]) => `<button data-nav="${key}">${label}</button>`).join("")}</div>
       </aside>
       <main class="main">
