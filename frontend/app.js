@@ -1088,7 +1088,7 @@ async function renderDaily() {
       </div>
       <div class="toolbar">
         <label>项目<select id="daily-project">${projectOptions}</select></label>
-        <label>月份<input id="daily-month" type="month" data-month-only value="${today().slice(0, 7)}"></label>
+        <label>月份<input id="daily-month" type="text" value="${today().slice(0, 7)}" aria-label="日报月份" autocomplete="off"></label>
         <button id="export-daily-pdf" disabled>下载 PDF</button>
         <button id="export-daily" disabled>导出 Excel</button>
       </div>
@@ -1157,8 +1157,23 @@ async function renderDaily() {
     }
   };
 
+  let dailyMonthPicker = null;
+  if (typeof window.flatpickr === "function" && typeof window.monthSelectPlugin === "function") {
+    dailyMonthPicker = window.flatpickr($("#daily-month"), {
+      locale: "zh",
+      defaultDate: today().slice(0, 7),
+      altInput: true,
+      altFormat: "Y年m月",
+      allowInput: false,
+      plugins: [new window.monthSelectPlugin({ shorthand: true, dateFormat: "Y-m", altFormat: "Y年m月" })],
+      onChange: loadDailyMonth
+    });
+  } else {
+    $("#daily-month").type = "month";
+    $("#daily-month").onchange = loadDailyMonth;
+  }
+
   $("#daily-project").onchange = loadDailyMonth;
-  $("#daily-month").onchange = loadDailyMonth;
   $("#export-daily-pdf").onclick = () => download(`/api/reports/daily.pdf?${new URLSearchParams({ projectId: $("#daily-project").value, date: selectedDate }).toString()}`);
   $("#export-daily").onclick = () => download(`/api/export/report.xlsx?${new URLSearchParams({ kind: "daily", projectId: $("#daily-project").value, date: selectedDate }).toString()}`);
 
@@ -1181,7 +1196,8 @@ async function renderDaily() {
       try {
         const date = $("#manual-report-date").value;
         await api.post("/api/reports/daily/generate", { date, projectId: $("#daily-project").value });
-        $("#daily-month").value = date.slice(0, 7);
+        if (dailyMonthPicker) dailyMonthPicker.setDate(date.slice(0, 7), false);
+        else $("#daily-month").value = date.slice(0, 7);
         await loadDailyMonth();
         alert("日报快照和 PDF 已生成");
       } catch (error) { alert(error.message); }
