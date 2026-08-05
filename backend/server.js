@@ -29,7 +29,9 @@ const VENDOR_FILES = new Map([
   ["/vendor/flatpickr/month-select.css", path.join(ROOT, "node_modules/flatpickr/dist/plugins/monthSelect/style.css")],
   ["/vendor/flatpickr/flatpickr.min.js", path.join(ROOT, "node_modules/flatpickr/dist/flatpickr.min.js")],
   ["/vendor/flatpickr/zh.js", path.join(ROOT, "node_modules/flatpickr/dist/l10n/zh.js")],
-  ["/vendor/flatpickr/month-select.js", path.join(ROOT, "node_modules/flatpickr/dist/plugins/monthSelect/index.js")]
+  ["/vendor/flatpickr/month-select.js", path.join(ROOT, "node_modules/flatpickr/dist/plugins/monthSelect/index.js")],
+  ["/vendor/simple-datatables/style.css", path.join(ROOT, "node_modules/simple-datatables/dist/style.css")],
+  ["/vendor/simple-datatables/simple-datatables.js", path.join(ROOT, "node_modules/simple-datatables/dist/umd/simple-datatables.js")]
 ]);
 const PDF_GENERATOR = path.join(__dirname, "pdf_generator.py");
 const REPORT_PDF_GENERATOR = path.join(__dirname, "report_pdf_generator.py");
