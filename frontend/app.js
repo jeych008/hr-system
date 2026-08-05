@@ -20,6 +20,9 @@ const api = {
   put(path, body) { return this.request(path, { method: "PUT", body: JSON.stringify(body) }); }
 };
 
+const CANDIDATE_PAGE_SIZES = [10, 20, 50, 100];
+const savedCandidatePageSize = Number(localStorage.getItem("candidatePageSize"));
+
 const state = {
   user: null,
   projects: [],
@@ -29,9 +32,12 @@ const state = {
   candidateStatus: "",
   candidateKeyword: "",
   candidateProjectId: "",
+  candidatePageSize: CANDIDATE_PAGE_SIZES.includes(savedCandidatePageSize) ? savedCandidatePageSize : 20,
   selectedIds: new Set(),
   captcha: null
 };
+
+let candidateDataTable = null;
 
 const $ = sel => document.querySelector(sel);
 const app = $("#app");
@@ -422,6 +428,12 @@ async function renderCandidates() {
     api.get(`/api/candidate-metrics?projectId=${encodeURIComponent(projectId)}`)
   ]);
   state.candidates = list.items;
+  const visibleCandidateIds = new Set(state.candidates.map(candidate => candidate.id));
+  state.selectedIds = new Set([...state.selectedIds].filter(id => visibleCandidateIds.has(id)));
+  if (candidateDataTable) {
+    candidateDataTable.destroy();
+    candidateDataTable = null;
+  }
   $("#view").innerHTML = `
     <section class="panel">
       ${renderCandidateDashboard(dashboard)}
@@ -438,11 +450,12 @@ async function renderCandidates() {
       <div class="tabs">
         ${CANDIDATE_GROUPS.map(([key, label]) => `<button data-candidate-group="${key}" class="${group === key ? "active" : ""}">${label}</button>`).join("")}
       </div>
-      <table>
+      <div id="candidate-table-shell" class="employee-table-shell">
+      <table id="candidate-table">
         <thead><tr><th><input type="checkbox" id="check-all"></th><th>姓名</th><th>项目</th><th>手机</th><th>身份证</th><th>学历</th><th>岗位</th><th>状态</th><th>关键日期/原因</th><th>操作</th></tr></thead>
         <tbody>${state.candidates.map(c => `
           <tr>
-            <td><input type="checkbox" data-id="${h(c.id)}"></td>
+            <td><input type="checkbox" data-candidate-id="${h(c.id)}" aria-label="选择${h(c.name)}" ${state.selectedIds.has(c.id) ? "checked" : ""}></td>
             <td>${h(c.name)}</td><td>${h(projectName(c.projectId))}</td><td>${h(c.phone)}</td><td>${h(c.idCard || "-")}</td><td>${h(c.education)}</td><td>${h(c.appliedPosition || "-")}</td>
             <td>${statusBadge(c.statusCode)}</td>
             <td>${renderCandidateStatusDetail(c)}</td>
@@ -451,9 +464,9 @@ async function renderCandidates() {
               <button data-preview="${h(c.id)}">预览</button>
               <button data-pdf="${h(c.id)}">下载简历</button>
             </div></td>
-          </tr>`).join("") || `<tr><td colspan="10" class="empty">暂无数据</td></tr>`}
+          </tr>`).join("")}
         </tbody>
-      </table>
+      </table></div>
     </section>`;
   $("#project-filter").value = projectId;
   $("#candidate-status-filter").value = status;
@@ -475,22 +488,87 @@ async function renderCandidates() {
     renderCandidates();
   });
   if ($("#new-candidate")) $("#new-candidate").onclick = () => openCandidateForm();
-  $("#check-all").onchange = e => document.querySelectorAll("[data-id]").forEach(cb => cb.checked = e.target.checked);
-  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = async () => openCandidateForm(await api.get(`/api/candidates/${b.dataset.edit}`)));
-  document.querySelectorAll("[data-status-action]").forEach(select => select.onchange = () => {
-    const action = select.value;
-    select.value = "";
-    if (action) openStatusDialog(select.dataset.statusAction, action);
+
+  const tableShell = $("#candidate-table-shell");
+  const syncCandidateSelectionUi = () => {
+    const checkboxes = [...tableShell.querySelectorAll("[data-candidate-id]")];
+    checkboxes.forEach(checkbox => { checkbox.checked = state.selectedIds.has(checkbox.dataset.candidateId); });
+    const checkAll = tableShell.querySelector("#check-all");
+    if (checkAll) {
+      checkAll.checked = checkboxes.length > 0 && checkboxes.every(checkbox => checkbox.checked);
+      checkAll.indeterminate = checkboxes.some(checkbox => checkbox.checked) && !checkAll.checked;
+    }
+    $("#download-pdf").textContent = state.selectedIds.size
+      ? `批量下载简历（${state.selectedIds.size}）`
+      : "批量下载简历";
+  };
+
+  tableShell.addEventListener("change", event => {
+    const target = event.target;
+    if (target.matches("[data-candidate-id]")) {
+      if (target.checked) state.selectedIds.add(target.dataset.candidateId);
+      else state.selectedIds.delete(target.dataset.candidateId);
+      return syncCandidateSelectionUi();
+    }
+    if (target.matches("#check-all")) {
+      tableShell.querySelectorAll("[data-candidate-id]").forEach(checkbox => {
+        checkbox.checked = target.checked;
+        if (target.checked) state.selectedIds.add(checkbox.dataset.candidateId);
+        else state.selectedIds.delete(checkbox.dataset.candidateId);
+      });
+      return syncCandidateSelectionUi();
+    }
+    if (target.matches("[data-status-action]")) {
+      const action = target.value;
+      target.value = "";
+      if (action) openStatusDialog(target.dataset.statusAction, action);
+    }
   });
-  document.querySelectorAll("[data-confirm-onboard]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.confirmOnboard, "onboard"));
-  document.querySelectorAll("[data-abandon]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.abandon, "abandon"));
-  document.querySelectorAll("[data-reschedule]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.reschedule, "reschedule"));
-  document.querySelectorAll("[data-left-employee]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.leftEmployee, "left"));
-  document.querySelectorAll("[data-activate]").forEach(b => b.onclick = () => openStatusDialog(b.dataset.activate, "activate"));
-  document.querySelectorAll("[data-preview]").forEach(b => b.onclick = () => openResumePreview(b.dataset.preview));
-  document.querySelectorAll("[data-pdf]").forEach(b => b.onclick = () => download(`/api/export/candidates.pdf?ids=${b.dataset.pdf}`));
+
+  tableShell.addEventListener("click", async event => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    if (button.dataset.edit) return openCandidateForm(await api.get(`/api/candidates/${button.dataset.edit}`));
+    if (button.dataset.confirmOnboard) return openStatusDialog(button.dataset.confirmOnboard, "onboard");
+    if (button.dataset.abandon) return openStatusDialog(button.dataset.abandon, "abandon");
+    if (button.dataset.reschedule) return openStatusDialog(button.dataset.reschedule, "reschedule");
+    if (button.dataset.leftEmployee) return openStatusDialog(button.dataset.leftEmployee, "left");
+    if (button.dataset.activate) return openStatusDialog(button.dataset.activate, "activate");
+    if (button.dataset.preview) return openResumePreview(button.dataset.preview);
+    if (button.dataset.pdf) return download(`/api/export/candidates.pdf?ids=${button.dataset.pdf}`);
+  });
+
+  candidateDataTable = new window.simpleDatatables.DataTable("#candidate-table", {
+    searchable: false,
+    sortable: false,
+    paging: true,
+    perPage: state.candidatePageSize,
+    perPageSelect: CANDIDATE_PAGE_SIZES,
+    firstText: "首页",
+    lastText: "末页",
+    nextText: "下一页",
+    prevText: "上一页",
+    labels: {
+      perPage: "{select} 条/页",
+      noRows: "暂无数据",
+      noResults: "暂无匹配数据",
+      info: "第 {start}–{end} 条，共 {rows} 条",
+      pageTitle: "第 {page} 页"
+    }
+  });
+  candidateDataTable.on("datatable.page", syncCandidateSelectionUi);
+  candidateDataTable.on("datatable.perpage", perPage => {
+    const pageSize = Number(perPage);
+    if (CANDIDATE_PAGE_SIZES.includes(pageSize)) {
+      state.candidatePageSize = pageSize;
+      localStorage.setItem("candidatePageSize", String(pageSize));
+    }
+    syncCandidateSelectionUi();
+  });
+  syncCandidateSelectionUi();
+
   $("#download-pdf").onclick = () => {
-    const ids = [...document.querySelectorAll("[data-id]:checked")].map(x => x.dataset.id);
+    const ids = [...state.selectedIds];
     if (!ids.length) return alert("请先勾选候选人");
     download(`/api/export/candidates.pdf?ids=${ids.join(",")}`);
   };
