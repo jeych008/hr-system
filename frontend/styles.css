@@ -312,6 +312,58 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .badge.danger { background: #fff1ee; color: var(--danger); }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .action-select { width: auto; min-width: 112px; padding: 8px 10px; }
+.employee-table-shell { width: 100%; }
+.employee-table-shell .datatable-container {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.employee-table-shell .datatable-table { min-width: 1120px; }
+.employee-table-shell input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.employee-table-shell .datatable-top,
+.employee-table-shell .datatable-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+.employee-table-shell .datatable-dropdown,
+.employee-table-shell .datatable-info {
+  color: var(--muted);
+  font-size: 13px;
+}
+.employee-table-shell .datatable-selector {
+  width: auto;
+  min-width: 76px;
+  margin-right: 6px;
+  padding: 7px 28px 7px 9px;
+  border-color: var(--line);
+  border-radius: 6px;
+}
+.employee-table-shell .datatable-pagination-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.employee-table-shell .datatable-pagination-list button {
+  min-width: 34px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 9px;
+  background: #fff;
+  color: var(--text);
+}
+.employee-table-shell .datatable-pagination-list button:hover { background: var(--primary-weak); }
+.employee-table-shell .datatable-pagination .datatable-active button {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
 .tabs {
   display: flex;
   gap: 8px;
@@ -532,6 +584,7 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
   .resume-grid, .resume-work > div:first-child { grid-template-columns: 1fr; }
   .donut-wrap { grid-template-columns: 1fr; justify-items: center; }
   .legend { width: 100%; }
+  .employee-table-shell .datatable-bottom { align-items: flex-start; flex-direction: column; }
   .snapshot-heading, .manual-report-row { align-items: stretch; flex-direction: column; }
   .calendar-day { aspect-ratio: 1; padding: 4px; }
 }
