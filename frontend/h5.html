@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>候选人简历填写</title>
+  <title>简历填写 - 人力资源管理平台</title>
+  <link rel="stylesheet" href="/vendor/flatpickr/flatpickr.min.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -19,7 +20,7 @@
         <label>手机号<input id="phone" inputmode="tel" required></label>
         <label>身份证号码<input id="idCard" maxlength="18" minlength="18" placeholder="18位身份证号" required></label>
         <label>邮箱<input id="email" type="email" required></label>
-        <label>获知招聘信息渠道<select id="channel" required><option>BOSS直聘</option><option>58同城</option><option>本地招聘网</option><option>现场招聘会</option><option>亲友介绍</option><option>社区推荐</option><option>其他</option></select></label>
+        <label>获知招聘信息渠道<select id="channel" required><option>BOSS直聘</option><option>58同城</option><option>本地招聘网</option><option>现场招聘会</option><option>人力资源公司</option><option>亲友介绍</option><option>社区推荐</option><option>其他</option></select></label>
         <label id="channelDetailWrap" style="display:none">渠道补充信息<input id="channelDetail" placeholder="如选择其他，请输入具体渠道；如选择亲友介绍，请输入介绍人"></label>
         <label>应聘岗位<input id="position" required></label>
         <label>可到岗时间<input id="availableDate" type="text" inputmode="numeric" maxlength="10" placeholder="yyyy-mm-dd" data-manual-date required></label>
@@ -48,6 +49,8 @@
     </section>
   </main>
   <script src="/locations.js"></script>
+  <script src="/vendor/flatpickr/flatpickr.min.js"></script>
+  <script src="/vendor/flatpickr/zh.js"></script>
   <script src="/validators.js"></script>
   <script>
     const params = new URLSearchParams(location.search);

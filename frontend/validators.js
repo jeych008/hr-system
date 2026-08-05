@@ -27,6 +27,14 @@ window.bindManualDateInputs = function bindManualDateInputs(root = document) {
     input.addEventListener("input", () => {
       input.value = window.formatManualDate(input.value);
     });
+    if (window.flatpickr) {
+      window.flatpickr(input, {
+        locale: "zh",
+        dateFormat: "Y-m-d",
+        allowInput: true,
+        disableMobile: true
+      });
+    }
   });
 };
 
