@@ -68,6 +68,7 @@ def section_title(text, styles):
 
 def comparison_table(report, styles):
     current = report.get("currentDayMetrics") or {}
+    monthly = report.get("monthlyMetrics") or {}
     cumulative = report.get("metrics") or {}
     columns = [
         ("新增候选人", "candidateCount"),
@@ -78,14 +79,18 @@ def comparison_table(report, styles):
     ]
     data = [[para(label, styles["card_title"]) for label, _ in columns]]
     data.append([para(f"今日  {current.get(key, 0)}", styles["card_value_white"]) for _, key in columns])
+    if report.get("monthlyMetrics"):
+        data.append([para(f"本月  {monthly.get(key, 0)}", styles["card_value_white"]) for _, key in columns])
     data.append([para(f"累计  {cumulative.get(key, 0)}", styles["card_value_white"]) for _, key in columns])
-    table = Table(data, colWidths=[51 * mm] * 5, rowHeights=[9 * mm, 11 * mm, 11 * mm])
+    row_heights = [9 * mm] + [11 * mm] * (len(data) - 1)
+    table = Table(data, colWidths=[51 * mm] * 5, rowHeights=row_heights)
     table.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.7, LINE),
         ("INNERGRID", (0, 0), (-1, -1), 0.5, LINE),
         ("BACKGROUND", (0, 0), (-1, 0), LIGHT),
         ("BACKGROUND", (0, 1), (-1, 1), BLUE),
-        ("BACKGROUND", (0, 2), (-1, 2), ORANGE),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#0F8A5F") if report.get("monthlyMetrics") else ORANGE),
+        *([("BACKGROUND", (0, 3), (-1, 3), ORANGE)] if report.get("monthlyMetrics") else []),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ]))
@@ -170,13 +175,14 @@ def standard_table_style():
     ])
 
 
-def project_table(items, styles, today=False):
+def project_table(items, styles, today=False, monthly=False):
     if today:
         headers = ["项目", "日期", "新增", "到面", "通过", "入职", "离职", "培训中", "当前在职"]
         keys = ["projectName", "date", "newCandidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "trainingCount", "onboardCount"]
         widths = [46, 24, 20, 20, 20, 20, 20, 22, 25]
     else:
-        headers = ["项目", "累计候选人", "到面", "通过", "入职", "离职", "培训中", "在岗", "缺口", "通过率", "目标完成率"]
+        prefix = "本月" if monthly else "累计"
+        headers = ["项目", f"{prefix}候选人", "到面", "通过", "入职", "离职", "培训中", "在岗", "缺口", "通过率", "目标完成率"]
         keys = ["projectName", "candidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount", "trainingCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"]
         widths = [43, 25, 19, 19, 19, 19, 21, 19, 19, 23, 27]
     rows = [[para(header, styles["table_head"]) for header in headers]]
@@ -246,8 +252,9 @@ def build_pdf(report):
     story += section_title("候选人分布", styles)
     story.append(distribution_tables(report, styles))
     story.append(PageBreak())
-    story += section_title("按项目累计统计", styles)
-    story.append(project_table(report.get("byProject") or [], styles))
+    has_monthly_projects = bool(report.get("monthlyByProject"))
+    story += section_title("本月按项目统计" if has_monthly_projects else "按项目累计统计", styles)
+    story.append(project_table(report.get("monthlyByProject") or report.get("byProject") or [], styles, monthly=has_monthly_projects))
     story += section_title("当日各项目入职对比", styles)
     story.append(project_bar_chart(report.get("todayByProject") or []))
     story += section_title("当日各项目招聘数据", styles)

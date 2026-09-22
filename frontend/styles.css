@@ -230,6 +230,7 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .comparison-value span { font-size: 12px; }
 .comparison-value strong { font-size: 20px; }
 .today-value { background: #173b6c; }
+.monthly-value { background: #0f8a5f; }
 .cumulative-value { background: #d97706; }
 .report-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .trend-panel { overflow: hidden; }
