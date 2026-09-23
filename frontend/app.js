@@ -932,7 +932,7 @@ function renderMetrics(metrics, keys = null) {
   return `<div class="grid">${entries.map(([k, v]) => `<div class="metric"><span>${h(labels[k] || k)}</span><strong>${h(value(k, v))}</strong></div>`).join("")}</div>`;
 }
 
-function renderRecruitmentComparison(todayMetrics = {}, cumulativeMetrics = {}) {
+function renderRecruitmentComparison(todayMetrics = {}, cumulativeMetrics = {}, monthlyMetrics = null) {
   const items = [
     ["新增候选人", "candidateCount"],
     ["到面人数", "arrivedCount"],
@@ -944,6 +944,7 @@ function renderRecruitmentComparison(todayMetrics = {}, cumulativeMetrics = {}) 
     <div class="comparison-card">
       <h4>${h(label)}</h4>
       <div class="comparison-value today-value"><span>今日</span><strong>${h(todayMetrics[key] || 0)}</strong></div>
+      ${monthlyMetrics ? `<div class="comparison-value monthly-value"><span>本月</span><strong>${h(monthlyMetrics[key] || 0)}</strong></div>` : ""}
       <div class="comparison-value cumulative-value"><span>累计</span><strong>${h(cumulativeMetrics[key] || 0)}</strong></div>
     </div>`).join("")}</div>`;
 }
@@ -1024,13 +1025,13 @@ function renderCharts(distributions, options = {}) {
   }).join("")}</div>`;
 }
 
-function renderProjectStats(items = []) {
+function renderProjectStats(items = [], monthly = false) {
   if (!items.length) return "";
   return `
     <section class="panel">
-      <h3>按项目统计</h3>
+      <h3>${monthly ? "本月按项目统计" : "按项目统计"}</h3>
       <table>
-        <thead><tr><th>项目</th><th>累计候选人</th><th>到面人数</th><th>通过人数</th><th>入职人数</th><th>离职人数</th><th>培训中</th><th>当前在岗</th><th>剩余缺口</th><th>总通过率</th><th>目标完成率</th></tr></thead>
+        <thead><tr><th>项目</th><th>${monthly ? "本月候选人" : "累计候选人"}</th><th>${monthly ? "本月到面" : "到面人数"}</th><th>${monthly ? "本月通过" : "通过人数"}</th><th>${monthly ? "本月入职" : "入职人数"}</th><th>${monthly ? "本月离职" : "离职人数"}</th><th>培训中</th><th>当前在岗</th><th>剩余缺口</th><th>${monthly ? "本月通过率" : "总通过率"}</th><th>${monthly ? "本月目标完成率" : "目标完成率"}</th></tr></thead>
         <tbody>${items.map(item => `
           <tr>
             <td>${h(item.projectName)}</td>
@@ -1090,13 +1091,14 @@ function renderRecruitmentReport(report = {}) {
     ...current,
     candidateCount: current.candidateCount ?? current.newCandidateCount ?? 0
   };
+  const monthlyMetrics = report.monthlyMetrics || null;
   const metrics = report.metrics || {};
   const secondaryMetrics = ["trainingCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"];
-  return renderRecruitmentComparison(currentDayMetrics, metrics) +
+  return renderRecruitmentComparison(currentDayMetrics, metrics, monthlyMetrics) +
     "<br>" + renderMetrics(metrics, secondaryMetrics) +
     renderJoinTrend(report.dailyJoinTrend || [], report.reportMonth || "") +
     "<br>" + renderCharts(report.distributions || {}, { donutGroups: ["gender", "experience"] }) +
-    "<br>" + renderProjectStats(report.byProject || []) +
+    "<br>" + renderProjectStats(monthlyMetrics ? (report.monthlyByProject || []) : (report.byProject || []), Boolean(monthlyMetrics)) +
     renderTodayProjectStats(report.todayByProject || []);
 }
 

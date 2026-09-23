@@ -796,7 +796,9 @@ function buildDailySnapshot(db, projectId, date) {
   const projectIds = projectId === ALL_PROJECTS_REPORT_ID ? db.projects.map(project => project.id) : [projectId];
   const selectedProjectId = projectId === ALL_PROJECTS_REPORT_ID ? "" : projectId;
   const reportMonth = localMonth(date);
+  const monthStart = `${reportMonth}-01`;
   const cumulative = cumulativeReport(db, selectedProjectId, "", date, projectIds, true, reportMonth);
+  const monthly = cumulativeReport(db, selectedProjectId, monthStart, date, projectIds, true, reportMonth, "monthly");
   const currentDay = cumulativeReport(db, selectedProjectId, date, date, projectIds, false, reportMonth);
   cumulative.todayByProject = todayProjectStats(db, projectIds, date);
   return {
@@ -810,6 +812,8 @@ function buildDailySnapshot(db, projectId, date) {
     generatedAt: nowIso(),
     reportMonth,
     currentDayMetrics: currentDay.metrics,
+    monthlyMetrics: monthly.metrics,
+    monthlyByProject: monthly.byProject,
     metrics: cumulative.metrics,
     distributions: cumulative.distributions,
     dailyJoinTrend: cumulative.dailyJoinTrend,
@@ -1193,7 +1197,7 @@ function ensureReportPdf(report) {
   return file;
 }
 
-function cumulativeReport(db, projectId, from, to, allowedProjectIds = null, includeByProject = true, trendMonth = localMonth()) {
+function cumulativeReport(db, projectId, from, to, allowedProjectIds = null, includeByProject = true, trendMonth = localMonth(), completionRateMode = "historical") {
   const projectIds = projectId ? [projectId] : (allowedProjectIds || db.projects.map(p => p.id));
   const allowed = new Set(projectIds);
   const inProject = item => allowed.has(item.projectId);
@@ -1212,21 +1216,26 @@ function cumulativeReport(db, projectId, from, to, allowedProjectIds = null, inc
     sum.targetHc += hc.targetHc;
     return sum;
   }, { onboard: 0, training: 0, gap: 0, targetHc: 0 });
+  const joinedCount = countJoinedCandidates(db, projectIds, from, to);
+  const leftCount = countLeftCandidates(db, projectIds, from, to);
+  const completionDenominator = currentHc.targetHc;
   const metrics = {
     candidateCount: candidates.length,
     arrivedCount: arrived.length,
     passedCount: passed.length,
-    joinedCount: countJoinedCandidates(db, projectIds, from, to),
-    leftCount: countLeftCandidates(db, projectIds, from, to),
+    joinedCount,
+    leftCount,
     trainingCount: currentHc.training,
     onboardCount: currentHc.onboard,
     remainingGap: currentHc.gap,
     passRate: arrived.length ? Number((passed.length / arrived.length * 100).toFixed(2)) : 0,
-    hcCompletionRate: currentHc.targetHc ? Number((passed.length / currentHc.targetHc * 100).toFixed(2)) : 0
+    hcCompletionRate: completionDenominator > 0
+      ? Number((((completionRateMode === "monthly" ? passed.length - leftCount : passed.length) / completionDenominator) * 100).toFixed(2))
+      : 0
   };
   const byProject = includeByProject ? projectIds.map(pid => {
     const project = db.projects.find(p => p.id === pid);
-    const report = cumulativeReport(db, pid, from, to, [pid], false);
+    const report = cumulativeReport(db, pid, from, to, [pid], false, trendMonth, completionRateMode);
     return { projectId: pid, projectName: project?.name || pid, ...report.metrics };
   }) : [];
   const todayByProject = includeByProject ? todayProjectStats(db, projectIds) : [];
@@ -1277,6 +1286,24 @@ function reportRows(report) {
     }
     rows.push([]);
   }
+  if (report.monthlyMetrics) {
+    rows.push(["本月累计指标", "数值"]);
+    for (const key of ["candidateCount", "arrivedCount", "passedCount", "joinedCount", "leftCount"]) {
+      const label = {
+        candidateCount: "本月新增候选人",
+        arrivedCount: "本月到面人数",
+        passedCount: "本月通过人数",
+        joinedCount: "本月入职人数",
+        leftCount: "本月离职人数"
+      }[key];
+      rows.push([label, report.monthlyMetrics[key] || 0]);
+    }
+    for (const key of ["trainingCount", "onboardCount", "remainingGap", "passRate", "hcCompletionRate"]) {
+      const value = report.monthlyMetrics[key] || 0;
+      rows.push([metricLabels[key] || key, ["passRate", "hcCompletionRate"].includes(key) ? `${value}%` : value]);
+    }
+    rows.push([]);
+  }
   rows.push(["累计指标", "数值"]);
   for (const [key, value] of Object.entries(report.metrics || {})) {
     const formatted = ["passRate", "hcCompletionRate"].includes(key) ? `${value}%` : value;
@@ -1295,8 +1322,9 @@ function reportRows(report) {
     for (const item of report.dailyJoinTrend) rows.push([item.date, item.count]);
   }
   if (report.byProject?.length) {
-    rows.push([], ["按项目统计"], ["项目", "累计候选人", "到面人数", "通过人数", "入职人数", "离职人数", "培训中人数", "当前在岗人数", "当前剩余缺口", "总通过率", "目标完成率"]);
-    for (const item of report.byProject) {
+    const projectItems = report.monthlyByProject || report.byProject;
+    rows.push([], [report.monthlyByProject ? "本月按项目统计" : "按项目统计"], ["项目", report.monthlyByProject ? "本月候选人" : "累计候选人", report.monthlyByProject ? "本月到面人数" : "到面人数", report.monthlyByProject ? "本月通过人数" : "通过人数", report.monthlyByProject ? "本月入职人数" : "入职人数", report.monthlyByProject ? "本月离职人数" : "离职人数", "培训中人数", "当前在岗人数", "当前剩余缺口", report.monthlyByProject ? "本月通过率" : "总通过率", report.monthlyByProject ? "本月目标完成率" : "目标完成率"]);
+    for (const item of projectItems) {
       rows.push([
         item.projectName,
         item.candidateCount,
